@@ -1,0 +1,29 @@
+{
+  "credits": [
+    {
+      "id": "RateLimitResetCredit_example00000001",
+      "status": "available",
+      "title": "Full reset",
+      "expires_at": "2026-07-17T20:26:53Z"
+    },
+    {
+      "id": "RateLimitResetCredit_example00000002",
+      "status": "AVAILABLE",
+      "title": "Full reset",
+      "expires_at": "2026-07-26T19:58:13Z"
+    },
+    {
+      "id": "RateLimitResetCredit_example00000003",
+      "status": "available",
+      "title": "Full reset",
+      "expires_at": "2026-07-31T15:09:24Z"
+    },
+    {
+      "id": "RateLimitResetCredit_used-example",
+      "status": "used",
+      "title": "Full reset",
+      "expires_at": "2026-07-14T00:00:00Z"
+    }
+  ],
+  "total_earned_count": 0
+}

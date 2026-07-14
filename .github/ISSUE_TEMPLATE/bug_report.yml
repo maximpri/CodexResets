@@ -1,0 +1,37 @@
+name: Bug report
+description: Report a reproducible problem without sharing private data
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Never attach auth.json or an unredacted API response. Replace tokens,
+        credit IDs, usernames, hostnames, and local paths with synthetic values.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Include the expected and actual behavior.
+    validations:
+      required: true
+  - type: input
+    id: node
+    attributes:
+      label: Node.js version
+      placeholder: v22.x.x
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and terminal
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal sanitized reproduction
+      description: Prefer the synthetic fixture or a fully sanitized input file.
+    validations:
+      required: true

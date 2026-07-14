@@ -1,0 +1,32 @@
+{
+  "name": "codex-reset-credits",
+  "version": "1.0.0",
+  "description": "A privacy-conscious terminal viewer for Codex rate-limit reset credits.",
+  "type": "module",
+  "bin": {
+    "codex-reset-credits": "src/cli.mjs"
+  },
+  "scripts": {
+    "check": "node --check src/cli.mjs && node --check src/auth.mjs && node --check src/report.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "codex",
+    "openai",
+    "cli",
+    "rate-limit"
+  ],
+  "license": "MIT",
+  "files": [
+    "src",
+    "check-reset-credits.sh",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md"
+  ]
+}
