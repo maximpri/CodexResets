@@ -1,12 +1,27 @@
 # Codex Reset Credits
 
-A small, privacy-conscious terminal viewer for available Codex rate-limit reset credits. It sorts credits by expiry, converts timestamps to your local time zone, and highlights what needs attention without inventing progress percentages.
+A small, privacy-conscious Codex usage planner for the terminal. It shows the current weekly limit and natural reset, estimates usage pace and depletion, recommends when a saved full reset will recover the most capacity, and sorts saved resets by expiry.
 
 ```text
 ╭──────────────────────────────────────────────────────────────────────────────────────────────╮
 │ CODEX  /  RESET CREDITS                                                                      │
 │ 3 available credits                                             checked 2026-07-13 23:25 UTC │
 │ UTC                                                                                          │
+├──────────────────────────────────────────────────────────────────────────────────────────────┤
+│ WEEKLY USAGE                                                                                 │
+│ 20% used  ·  80% left                                                    resets in 6d 0h 34m │
+│     Mon 2026-07-20 00:00:00 UTC                                                              │
+│ Pace  20.32 points/day day/night weighted                                  MEDIUM confidence │
+│ Estimated empty                                                                 in 3d 22h 7m │
+│     Fri 2026-07-17 21:32:57 UTC                                                              │
+├──────────────────────────────────────────────────────────────────────────────────────────────┤
+│ SMART RESET PLAN                                                                  NEAR LIMIT │
+│ Current pace reaches the near-limit target before the natural weekly reset.                  │
+│     Recommended time                                                           in 3d 17h 23m │
+│     Fri 2026-07-17 16:49:25 UTC                                                              │
+│     Estimated reset value  95 points                                                         │
+│     Next saved full reset                                               expires in 3d 21h 1m │
+│     Fri 2026-07-17 20:26:53 UTC                                                              │
 ├──────────────────────────────────────────────────────────────────────────────────────────────┤
 │ 01  Full reset                                                                         LATER │
 │     Fri 2026-07-17 20:26:53 UTC                                                 in 3d 21h 1m │
@@ -92,9 +107,10 @@ Do not attach an unreviewed API response to a public issue. Remove identifiers a
 
 ## Privacy and security
 
-- The tool reads the Codex credential file locally and sends its access token only to OpenAI's ChatGPT credits service.
+- The tool reads the Codex credential file locally and sends its access token only to OpenAI's ChatGPT usage and reset-credit services.
 - It never prints access tokens, refresh tokens, raw authentication responses, or raw API error bodies.
 - It tries the existing access token first. Only after an HTTP 401 does it refresh the session and atomically update the same credential file, preserving its permissions.
+- Account IDs, email, plan metadata, and spend-control details returned with usage are discarded; only the weekly rate-limit window is normalized.
 - JSON output omits credit IDs unless `--show-ids` is explicitly set.
 - The repository contains synthetic fixtures only. No credential files, API responses, account IDs, usernames, home-directory paths, or real credit IDs should be committed.
 
@@ -102,7 +118,19 @@ Treat `~/.codex/auth.json` like a password. Never copy it into this repository, 
 
 ## Accuracy
 
-Urgency is based only on time remaining:
+The weekly percentage and reset timestamp come directly from the account usage response. The forecast is deliberately labeled as an estimate:
+
+- The command finds the primary or secondary window closest to seven days.
+- Average pace is calibrated from usage in the elapsed part of the weekly window. The elapsed time is weighted by local hour: `08:00–22:00` uses a `1.25×` daytime weight and overnight uses `0.65×`. These weights average to one across a normal 24-hour day.
+- Projections apply that same profile in the selected display time zone, so usage accumulates faster during the day and more slowly overnight. This is a planning assumption, not detected personal history; no usage history is stored.
+- `LOW`, `MEDIUM`, and `HIGH` describe how much of the current window has elapsed, not a statistical guarantee.
+- The preferred full-reset target is 95% usage, leaving a small buffer for forecast error while recovering nearly all weekly capacity.
+- The estimated reset value is the projected percentage points recovered by resetting usage to zero at the recommended time.
+- If the earliest saved full reset expires before the 95% target and before the natural weekly reset, the recommendation moves to 15 minutes before expiry so its projected value is not lost. A reset with zero projected recovery value is skipped. If the natural weekly reset comes first, the saved reset is kept for the next window.
+
+The recommendation is planning guidance, not a guarantee. A workload change can move the depletion time substantially, so rerun the command before consuming a reset.
+
+Saved-credit urgency is based only on time remaining:
 
 | Label | Time until expiry |
 | --- | ---: |
@@ -111,11 +139,11 @@ Urgency is based only on time remaining:
 | `TODAY` | 24 hours or less |
 | `LATER` | More than 24 hours |
 
-The report intentionally does not display a percentage bar. A meaningful percentage requires a trustworthy grant timestamp and lifetime; comparing one credit's remaining time with another credit creates a polished-looking but false metric. It also omits the API's `total_earned_count`, because that field can be absent or conflict with the available-credit list and its public semantics are not documented.
+The report does not turn credit expiry into a percentage bar. The only displayed percentage is the server-provided weekly usage value (plus clearly labeled projections derived from it). It also omits the credits API's `total_earned_count`, because that field can be absent or conflict with the available-credit list and its public semantics are not documented.
 
 ## Project status and compatibility
 
-This is an independent community project, not an official OpenAI product. It uses an undocumented ChatGPT web endpoint that may change or disappear without notice. The supported Codex interface for viewing usage and using a reset credit is the `/usage` command inside the Codex TUI.
+This is an independent community project, not an official OpenAI product. It uses undocumented ChatGPT web endpoints that may change or disappear without notice. The supported Codex interface for viewing usage and using a reset credit is the `/usage` command inside the Codex TUI.
 
 The tool is read-only with respect to credits: it lists them but never consumes one. A token refresh can update the local Codex credential file as described above.
 
@@ -131,7 +159,7 @@ Run `codex login` again. The command deliberately avoids printing the authentica
 
 ### The service format may have changed
 
-The endpoint is undocumented, so its response can change. Reproduce the problem with a fully sanitized input file before opening an issue; never attach the original credential file or an unreviewed service response.
+The endpoints are undocumented, so their responses can change. Reproduce the problem with a fully sanitized input file before opening an issue; never attach the original credential file or an unreviewed service response.
 
 ### Borders or colors do not render correctly
 

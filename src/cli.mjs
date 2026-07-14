@@ -4,13 +4,13 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { fetchCredits, SafeError } from './auth.mjs';
+import { fetchAccountData, SafeError } from './auth.mjs';
 import { normalizeReport, renderJson, renderTable, validateTimeZone } from './report.mjs';
 
 const packagePath = fileURLToPath(new URL('../package.json', import.meta.url));
 
 function usage() {
-  return `Codex Reset Credits
+  return `Codex Usage & Reset Planner
 
 Usage:
   codex-reset-credits [options]
@@ -167,7 +167,7 @@ async function main() {
     return;
   }
 
-  const data = options.input ? await readInput(options.input) : await fetchCredits(options.authFile);
+  const data = options.input ? await readInput(options.input) : await fetchAccountData(options.authFile);
   if (!Array.isArray(data?.credits)) {
     throw new SafeError('The response does not contain a credits list. The service format may have changed.');
   }

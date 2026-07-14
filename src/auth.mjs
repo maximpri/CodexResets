@@ -3,6 +3,7 @@ import { basename, dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 export const CREDITS_URL = 'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits';
+export const USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 const TOKEN_URL = 'https://auth.openai.com/api/accounts/oauth/token';
 
 export class SafeError extends Error {
@@ -131,10 +132,10 @@ async function refreshSession(authFile, auth, fetchImpl) {
   return { auth: nextAuth, accessToken: body.access_token };
 }
 
-async function requestCredits(accessToken, fetchImpl) {
+async function requestResource(url, label, accessToken, fetchImpl) {
   let response;
   try {
-    response = await fetchImpl(CREDITS_URL, {
+    response = await fetchImpl(url, {
       redirect: 'error',
       headers: {
         accept: 'application/json',
@@ -142,7 +143,7 @@ async function requestCredits(accessToken, fetchImpl) {
       },
     });
   } catch (error) {
-    throw new SafeError('Could not reach the Codex credits service.', { cause: error });
+    throw new SafeError(`Could not reach the Codex ${label} service.`, { cause: error });
   }
 
   if (response.status === 401) return { unauthorized: true };
@@ -150,12 +151,26 @@ async function requestCredits(accessToken, fetchImpl) {
   const body = await parseResponse(response);
   if (!response.ok) {
     const suffix = safeErrorCode(body?.error?.code ?? body?.error);
-    throw new SafeError(`The Codex credits service returned HTTP ${response.status}${suffix}.`);
+    throw new SafeError(`The Codex ${label} service returned HTTP ${response.status}${suffix}.`);
   }
   return { body, unauthorized: false };
 }
 
-export async function fetchCredits(authFile, fetchImpl = globalThis.fetch) {
+const requestCredits = (accessToken, fetchImpl) => requestResource(
+  CREDITS_URL,
+  'credits',
+  accessToken,
+  fetchImpl,
+);
+
+const requestUsage = (accessToken, fetchImpl) => requestResource(
+  USAGE_URL,
+  'usage',
+  accessToken,
+  fetchImpl,
+);
+
+async function fetchWithSession(authFile, fetchImpl, request) {
   if (typeof fetchImpl !== 'function') {
     throw new SafeError('This Node.js version does not provide fetch. Install Node.js 18 or newer.');
   }
@@ -167,14 +182,53 @@ export async function fetchCredits(authFile, fetchImpl = globalThis.fetch) {
     ({ auth, accessToken } = await refreshSession(authFile, auth, fetchImpl));
   }
 
-  let result = await requestCredits(accessToken, fetchImpl);
+  let result = await request(accessToken, fetchImpl);
   if (result.unauthorized) {
     ({ auth, accessToken } = await refreshSession(authFile, auth, fetchImpl));
-    result = await requestCredits(accessToken, fetchImpl);
+    result = await request(accessToken, fetchImpl);
   }
 
   if (result.unauthorized) {
     throw new SafeError('The refreshed Codex session was rejected. Run `codex login` and try again.');
   }
   return result.body;
+}
+
+export function fetchCredits(authFile, fetchImpl = globalThis.fetch) {
+  return fetchWithSession(authFile, fetchImpl, requestCredits);
+}
+
+export function fetchUsage(authFile, fetchImpl = globalThis.fetch) {
+  return fetchWithSession(authFile, fetchImpl, requestUsage);
+}
+
+export async function fetchAccountData(authFile, fetchImpl = globalThis.fetch) {
+  if (typeof fetchImpl !== 'function') {
+    throw new SafeError('This Node.js version does not provide fetch. Install Node.js 18 or newer.');
+  }
+
+  let auth = await loadAuth(authFile);
+  let accessToken = auth?.tokens?.access_token;
+  if (!accessToken) {
+    ({ auth, accessToken } = await refreshSession(authFile, auth, fetchImpl));
+  }
+
+  let [credits, usage] = await Promise.all([
+    requestCredits(accessToken, fetchImpl),
+    requestUsage(accessToken, fetchImpl),
+  ]);
+
+  if (credits.unauthorized || usage.unauthorized) {
+    ({ auth, accessToken } = await refreshSession(authFile, auth, fetchImpl));
+    [credits, usage] = await Promise.all([
+      requestCredits(accessToken, fetchImpl),
+      requestUsage(accessToken, fetchImpl),
+    ]);
+  }
+
+  if (credits.unauthorized || usage.unauthorized) {
+    throw new SafeError('The refreshed Codex session was rejected. Run `codex login` and try again.');
+  }
+
+  return { ...credits.body, usage: usage.body };
 }

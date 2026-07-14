@@ -4,6 +4,13 @@ All notable changes to this project will be documented here. The format follows 
 
 ## [Unreleased]
 
+### Added
+
+- Weekly usage percentage, remaining capacity, and natural reset timing.
+- Day/night-weighted depletion estimates with confidence labels and timezone-aware peak usage.
+- Smart full-reset timing that accounts for the 95% usage target, weekly reset, earliest saved-reset expiry, and projected recovery value.
+- Normalized weekly usage, recommendation, and next-saved-reset fields in JSON output.
+
 ## [1.0.0] - 2026-07-14
 
 ### Added

@@ -1,4 +1,13 @@
-const HOUR = 60 * 60 * 1000;
+const MINUTE = 60 * 1000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+const WEEK = 7 * DAY;
+const RESET_TARGET_PERCENT = 95;
+const EXPIRY_BUFFER = 15 * MINUTE;
+const DAYTIME_START_HOUR = 8;
+const DAYTIME_END_HOUR = 22;
+const DAYTIME_USAGE_WEIGHT = 1.25;
+const NIGHT_USAGE_WEIGHT = 0.65;
 
 const ANSI = {
   reset: '\u001b[0m',
@@ -13,6 +22,21 @@ const ANSI = {
 const stripAnsi = (value) => String(value).replace(/\u001b\[[0-9;]*m/g, '');
 const visibleLength = (value) => [...stripAnsi(value)].length;
 const plural = (count, singular, multiple = `${singular}s`) => count === 1 ? singular : multiple;
+const clamp = (value, minimum, maximum) => Math.min(maximum, Math.max(minimum, value));
+
+function finiteNumber(value) {
+  const number = typeof value === 'string' && value.trim() ? Number(value) : value;
+  return Number.isFinite(number) ? number : null;
+}
+
+function timestampDate(value) {
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? new Date(value) : null;
+  const numeric = finiteNumber(value);
+  const date = numeric === null
+    ? new Date(value ?? '')
+    : new Date(Math.abs(numeric) < 1_000_000_000_000 ? numeric * 1000 : numeric);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
 
 export function validateTimeZone(timeZone) {
   try {
@@ -37,6 +61,56 @@ function dateParts(date, timeZone) {
     timeZoneName: 'short',
   });
   return Object.fromEntries(formatter.formatToParts(date).map(({ type, value }) => [type, value]));
+}
+
+function usageWeightAt(date, timeZone) {
+  const hour = Number(dateParts(date, timeZone).hour);
+  return hour >= DAYTIME_START_HOUR && hour < DAYTIME_END_HOUR
+    ? DAYTIME_USAGE_WEIGHT
+    : NIGHT_USAGE_WEIGHT;
+}
+
+function millisecondsToNextLocalHour(date, timeZone) {
+  const part = dateParts(date, timeZone);
+  return (60 - Number(part.minute)) * MINUTE
+    - Number(part.second) * 1000
+    - date.getUTCMilliseconds();
+}
+
+function weightedDurationMs(start, end, timeZone) {
+  if (!start || !end || end <= start) return 0;
+  let cursor = start.getTime();
+  let weighted = 0;
+  while (cursor < end.getTime()) {
+    const date = new Date(cursor);
+    const segmentMs = Math.min(
+      end.getTime() - cursor,
+      millisecondsToNextLocalHour(date, timeZone),
+    );
+    weighted += segmentMs * usageWeightAt(date, timeZone);
+    cursor += segmentMs;
+  }
+  return weighted;
+}
+
+function dateAfterWeightedDuration(start, weightedMs, end, timeZone) {
+  if (!Number.isFinite(weightedMs) || weightedMs <= 0) return new Date(start);
+  let cursor = start.getTime();
+  let remaining = weightedMs;
+  const endMs = end?.getTime() ?? Number.POSITIVE_INFINITY;
+  while (cursor < endMs) {
+    const date = new Date(cursor);
+    const weight = usageWeightAt(date, timeZone);
+    const segmentMs = Math.min(
+      endMs - cursor,
+      millisecondsToNextLocalHour(date, timeZone),
+    );
+    const weightedSegment = segmentMs * weight;
+    if (remaining <= weightedSegment) return new Date(cursor + remaining / weight);
+    remaining -= weightedSegment;
+    cursor += segmentMs;
+  }
+  return null;
 }
 
 function formatDate(date, timeZone, { seconds = true, weekday = true } = {}) {
@@ -71,6 +145,245 @@ export function urgencyFor(milliseconds) {
   return 'LATER';
 }
 
+function windowDurationMs(window) {
+  const seconds = finiteNumber(window?.limit_window_seconds);
+  if (seconds !== null && seconds > 0) return seconds * 1000;
+  const minutes = finiteNumber(window?.window_minutes);
+  if (minutes !== null && minutes > 0) return minutes * MINUTE;
+  return null;
+}
+
+function normalizeWeeklyUsage(data, checkedAt, timeZone) {
+  const usage = data?.usage ?? data;
+  const rateLimit = usage?.rate_limit ?? usage?.rateLimit;
+  if (!rateLimit || typeof rateLimit !== 'object') return null;
+
+  const candidates = [
+    ['primary', rateLimit.primary_window ?? rateLimit.primary],
+    ['secondary', rateLimit.secondary_window ?? rateLimit.secondary],
+  ]
+    .map(([kind, window]) => ({ kind, window, durationMs: windowDurationMs(window) }))
+    .filter(({ window, durationMs }) => window && durationMs !== null)
+    .filter(({ durationMs }) => durationMs >= 5 * DAY && durationMs <= 9 * DAY)
+    .sort((a, b) => Math.abs(a.durationMs - WEEK) - Math.abs(b.durationMs - WEEK));
+
+  const candidate = candidates[0];
+  if (!candidate) return null;
+
+  const used = finiteNumber(candidate.window.used_percent);
+  if (used === null) return null;
+  const usedPercent = clamp(used, 0, 100);
+  const remainingPercent = 100 - usedPercent;
+  const resetAfterSeconds = finiteNumber(candidate.window.reset_after_seconds);
+  let resetsAt = timestampDate(candidate.window.reset_at ?? candidate.window.resets_at);
+  if ((!resetsAt || resetsAt.getTime() <= checkedAt.getTime())
+    && resetAfterSeconds !== null && resetAfterSeconds > 0) {
+    resetsAt = new Date(checkedAt.getTime() + resetAfterSeconds * 1000);
+  }
+  if (!resetsAt || resetsAt.getTime() <= checkedAt.getTime()) return null;
+
+  const startedAt = new Date(resetsAt.getTime() - candidate.durationMs);
+  const elapsedMs = checkedAt.getTime() - startedAt.getTime();
+  const validElapsed = elapsedMs >= 15 * MINUTE
+    && elapsedMs <= candidate.durationMs
+    && resetsAt.getTime() > checkedAt.getTime();
+  const weightedElapsedMs = validElapsed
+    ? weightedDurationMs(startedAt, checkedAt, timeZone)
+    : null;
+  const averagePercentPerDay = validElapsed && usedPercent > 0
+    ? usedPercent / (weightedElapsedMs / DAY)
+    : null;
+  const estimatedExhaustionAt = usedPercent >= 100
+    ? new Date(checkedAt)
+    : averagePercentPerDay === null || averagePercentPerDay <= 0
+      ? null
+      : dateAfterWeightedDuration(
+        checkedAt,
+        remainingPercent / averagePercentPerDay * DAY,
+        resetsAt,
+        timeZone,
+      );
+  const weightedRemainingMs = weightedDurationMs(checkedAt, resetsAt, timeZone);
+  const projectedUsedAtReset = averagePercentPerDay === null
+    ? usedPercent
+    : clamp(usedPercent + averagePercentPerDay * weightedRemainingMs / DAY, 0, 100);
+  const confidence = averagePercentPerDay === null || elapsedMs < 6 * HOUR
+    ? 'LOW'
+    : elapsedMs < 24 * HOUR
+      ? 'MEDIUM'
+      : 'HIGH';
+
+  return {
+    kind: candidate.kind,
+    usedPercent,
+    remainingPercent,
+    windowMs: candidate.durationMs,
+    startedAt,
+    resetsAt,
+    remainingMs: resetsAt.getTime() - checkedAt.getTime(),
+    averagePercentPerDay,
+    usageProfile: {
+      dayStartHour: DAYTIME_START_HOUR,
+      dayEndHour: DAYTIME_END_HOUR,
+      dayWeight: DAYTIME_USAGE_WEIGHT,
+      nightWeight: NIGHT_USAGE_WEIGHT,
+    },
+    estimatedExhaustionAt,
+    projectedUsedAtReset,
+    exhaustsBeforeReset: estimatedExhaustionAt !== null
+      && estimatedExhaustionAt.getTime() < resetsAt.getTime(),
+    confidence,
+    limitReached: Boolean(rateLimit.limit_reached) || usedPercent >= 100,
+  };
+}
+
+function projectedUsageAt(weeklyUsage, checkedAt, target, timeZone) {
+  if (!target) return null;
+  if (weeklyUsage.averagePercentPerDay === null) return weeklyUsage.usedPercent;
+  const weightedMs = weightedDurationMs(checkedAt, target, timeZone);
+  return clamp(
+    weeklyUsage.usedPercent + weeklyUsage.averagePercentPerDay * weightedMs / DAY,
+    0,
+    100,
+  );
+}
+
+function buildRecommendation(weeklyUsage, credits, checkedAt, timeZone) {
+  const usableCredits = credits.filter((credit) => !credit.expiresAt || credit.remainingMs > 0);
+  const nextSavedReset = usableCredits.find((credit) => credit.expiresAt) ?? usableCredits[0] ?? null;
+  const base = {
+    targetPercent: RESET_TARGET_PERCENT,
+    recommendedAt: null,
+    projectionAt: null,
+    projectedUsagePercent: null,
+    estimatedResetValuePercent: null,
+  };
+
+  if (!weeklyUsage) {
+    return {
+      nextSavedReset,
+      recommendation: {
+        ...base,
+        action: usableCredits.length ? 'CHECK_USAGE' : 'NO_SAVED_RESET',
+        reason: 'Weekly usage data is unavailable, so reset timing cannot be estimated.',
+      },
+    };
+  }
+
+  if (!usableCredits.length) {
+    return {
+      nextSavedReset: null,
+      recommendation: {
+        ...base,
+        action: 'NO_SAVED_RESET',
+        reason: weeklyUsage.exhaustsBeforeReset
+          ? 'Usage is projected to run out before the weekly reset, but no full reset is saved.'
+          : 'The weekly reset is expected before current usage runs out.',
+      },
+    };
+  }
+
+  if (weeklyUsage.limitReached || weeklyUsage.usedPercent >= RESET_TARGET_PERCENT) {
+    return {
+      nextSavedReset,
+      recommendation: {
+        ...base,
+        action: 'USE_NOW',
+        recommendedAt: new Date(checkedAt),
+        projectionAt: new Date(checkedAt),
+        projectedUsagePercent: weeklyUsage.usedPercent,
+        estimatedResetValuePercent: weeklyUsage.usedPercent,
+        reason: `Weekly usage is already at or above ${RESET_TARGET_PERCENT}%.`,
+      },
+    };
+  }
+
+  const targetAt = weeklyUsage.averagePercentPerDay === null
+    || weeklyUsage.averagePercentPerDay <= 0
+    ? null
+    : dateAfterWeightedDuration(
+      checkedAt,
+      (RESET_TARGET_PERCENT - weeklyUsage.usedPercent)
+        / weeklyUsage.averagePercentPerDay * DAY,
+      weeklyUsage.resetsAt,
+      timeZone,
+    );
+  const latestUseAt = nextSavedReset?.expiresAt
+    ? new Date(Math.max(
+      checkedAt.getTime(),
+      nextSavedReset.expiresAt.getTime() - EXPIRY_BUFFER,
+    ))
+    : null;
+  const expiresBeforeTarget = latestUseAt
+    && (!targetAt || latestUseAt.getTime() < targetAt.getTime());
+  const expiresBeforeWeeklyReset = nextSavedReset?.expiresAt
+    && nextSavedReset.expiresAt.getTime() < weeklyUsage.resetsAt.getTime();
+  const targetBeforeWeeklyReset = targetAt
+    && targetAt.getTime() < weeklyUsage.resetsAt.getTime();
+
+  if (targetBeforeWeeklyReset && !expiresBeforeTarget) {
+    return {
+      nextSavedReset,
+      recommendation: {
+        ...base,
+        action: 'USE_NEAR_LIMIT',
+        recommendedAt: targetAt,
+        projectionAt: targetAt,
+        projectedUsagePercent: RESET_TARGET_PERCENT,
+        estimatedResetValuePercent: RESET_TARGET_PERCENT,
+        reason: 'Current pace reaches the near-limit target before the natural weekly reset.',
+      },
+    };
+  }
+
+  if (expiresBeforeTarget && expiresBeforeWeeklyReset) {
+    const projectedUsagePercent = projectedUsageAt(
+      weeklyUsage,
+      checkedAt,
+      latestUseAt,
+      timeZone,
+    );
+    if (projectedUsagePercent <= 0) {
+      return {
+        nextSavedReset,
+        recommendation: {
+          ...base,
+          action: 'SKIP_EXPIRING_RESET',
+          projectionAt: latestUseAt,
+          projectedUsagePercent,
+          estimatedResetValuePercent: projectedUsagePercent,
+          reason: 'The next saved full reset has no projected recovery value before it expires.',
+        },
+      };
+    }
+    return {
+      nextSavedReset,
+      recommendation: {
+        ...base,
+        action: 'USE_BEFORE_EXPIRY',
+        recommendedAt: latestUseAt,
+        projectionAt: latestUseAt,
+        projectedUsagePercent,
+        estimatedResetValuePercent: projectedUsagePercent,
+        reason: 'Use the next saved full reset near expiry to recover its projected value before it is lost.',
+      },
+    };
+  }
+
+  return {
+    nextSavedReset,
+    recommendation: {
+      ...base,
+      action: 'WAIT_FOR_WEEKLY_RESET',
+      projectionAt: weeklyUsage.resetsAt,
+      projectedUsagePercent: weeklyUsage.projectedUsedAtReset,
+      reason: weeklyUsage.averagePercentPerDay === null
+        ? 'There is not enough usage yet for a reliable pace estimate, and the saved reset outlives this window.'
+        : 'The natural weekly reset is expected before usage reaches the near-limit target.',
+    },
+  };
+}
+
 function creditId(credit) {
   return String(credit?.id ?? credit?.credit_id ?? '');
 }
@@ -100,7 +413,21 @@ export function normalizeReport(data, { now = new Date(), timeZone } = {}) {
       return a.expiresAt - b.expiresAt;
     });
 
-  return { checkedAt, timeZone, credits };
+  const weeklyUsage = normalizeWeeklyUsage(data, checkedAt, timeZone);
+  const { nextSavedReset, recommendation } = buildRecommendation(
+    weeklyUsage,
+    credits,
+    checkedAt,
+    timeZone,
+  );
+  return {
+    checkedAt,
+    timeZone,
+    weeklyUsage,
+    nextSavedReset,
+    recommendation,
+    credits,
+  };
 }
 
 function truncate(value, maximum) {
@@ -125,9 +452,50 @@ function idLabel(id) {
 }
 
 export function renderJson(report, { showIds = false } = {}) {
+  const usage = report.weeklyUsage;
+  const recommendation = report.recommendation;
   const output = {
     checked_at: report.checkedAt.toISOString(),
     time_zone: report.timeZone,
+    weekly_usage: usage ? {
+      used_percent: usage.usedPercent,
+      remaining_percent: usage.remainingPercent,
+      window_minutes: usage.windowMs / MINUTE,
+      started_at: usage.startedAt.toISOString(),
+      resets_at: usage.resetsAt.toISOString(),
+      resets_in: formatDuration(usage.remainingMs),
+      average_percent_per_day: usage.averagePercentPerDay === null
+        ? null
+        : Number(usage.averagePercentPerDay.toFixed(2)),
+      estimated_exhaustion_at: usage.estimatedExhaustionAt?.toISOString() ?? null,
+      exhausts_before_reset: usage.exhaustsBeforeReset,
+      projected_used_percent_at_reset: Number(usage.projectedUsedAtReset.toFixed(2)),
+      projection_confidence: usage.confidence,
+      usage_profile: {
+        daytime_local_hours: `${String(usage.usageProfile.dayStartHour).padStart(2, '0')}:00-${String(usage.usageProfile.dayEndHour).padStart(2, '0')}:00`,
+        daytime_weight: usage.usageProfile.dayWeight,
+        night_weight: usage.usageProfile.nightWeight,
+      },
+    } : null,
+    recommendation: {
+      action: recommendation.action,
+      target_percent: recommendation.targetPercent,
+      recommended_at: recommendation.recommendedAt?.toISOString() ?? null,
+      projection_at: recommendation.projectionAt?.toISOString() ?? null,
+      projected_usage_percent: recommendation.projectedUsagePercent === null
+        ? null
+        : Number(recommendation.projectedUsagePercent.toFixed(2)),
+      estimated_reset_value_percent: recommendation.estimatedResetValuePercent === null
+        ? null
+        : Number(recommendation.estimatedResetValuePercent.toFixed(2)),
+      reason: recommendation.reason,
+    },
+    next_saved_full_reset: report.nextSavedReset ? {
+      title: report.nextSavedReset.title,
+      expires_at: report.nextSavedReset.expiresAt?.toISOString() ?? null,
+      expires_in: formatDuration(report.nextSavedReset.remainingMs),
+      ...(showIds ? { id: report.nextSavedReset.id || null } : {}),
+    } : null,
     available_count: report.credits.length,
     credits: report.credits.map((credit) => ({
       title: credit.title,
@@ -155,11 +523,33 @@ export function renderTable(report, options = {}) {
     ? `${styles.map((style) => ANSI[style]).join('')}${value}${ANSI.reset}`
     : String(value);
   const urgencyStyle = { NOW: 'red', SOON: 'yellow', TODAY: 'cyan', LATER: 'green', UNKNOWN: 'dim' };
+  const actionStyle = {
+    USE_NOW: 'red',
+    USE_NEAR_LIMIT: 'yellow',
+    USE_BEFORE_EXPIRY: 'yellow',
+    WAIT_FOR_WEEKLY_RESET: 'green',
+    SKIP_EXPIRING_RESET: 'green',
+    NO_SAVED_RESET: 'dim',
+    CHECK_USAGE: 'cyan',
+  };
+  const actionLabel = {
+    USE_NOW: 'USE NOW',
+    USE_NEAR_LIMIT: 'NEAR LIMIT',
+    USE_BEFORE_EXPIRY: 'BEFORE EXPIRY',
+    WAIT_FOR_WEEKLY_RESET: 'WAIT',
+    SKIP_EXPIRING_RESET: 'SKIP / WAIT',
+    NO_SAVED_RESET: 'NO CREDIT',
+    CHECK_USAGE: 'CHECK USAGE',
+  };
+  const numberLabel = (value, decimals = 1) => Number.isInteger(value)
+    ? String(value)
+    : value.toFixed(decimals).replace(/\.0$/, '');
   const fit = (value, maximum) => truncate(value, maximum).padEnd(maximum);
   const line = (content = '') => {
     const padding = Math.max(0, inner - visibleLength(content));
     return `${glyph.v} ${content}${' '.repeat(padding)} ${glyph.v}`;
   };
+  const textLine = (content = '') => line(truncate(terminalSafe(content), inner));
   const sides = (left, right) => {
     const gap = Math.max(1, inner - visibleLength(left) - visibleLength(right));
     return line(`${left}${' '.repeat(gap)}${right}`);
@@ -175,6 +565,86 @@ export function renderTable(report, options = {}) {
     paint(`checked ${formatDate(report.checkedAt, report.timeZone, { seconds: false, weekday: false })}`, 'dim'),
   ));
   output.push(line(paint(report.timeZone, 'dim')));
+
+  output.push(separator());
+  output.push(line(paint('WEEKLY USAGE', 'bold')));
+  const usage = report.weeklyUsage;
+  if (usage) {
+    output.push(sides(
+      `${paint(`${numberLabel(usage.usedPercent)}% used`, 'bold')}  ·  ${numberLabel(usage.remainingPercent)}% left`,
+      `resets in ${paint(formatDuration(usage.remainingMs), 'bold')}`,
+    ));
+    output.push(line(paint(`    ${formatDate(usage.resetsAt, report.timeZone)}`, 'dim')));
+    if (usage.averagePercentPerDay === null) {
+      output.push(sides('Pace  collecting early-window data', paint('LOW confidence', 'dim')));
+    } else {
+      output.push(sides(
+        `Pace  ${paint(`${numberLabel(usage.averagePercentPerDay, 2)} points/day`, 'bold')} day/night weighted`,
+        paint(`${usage.confidence} confidence`, usage.confidence === 'HIGH' ? 'green' : 'dim'),
+      ));
+    }
+
+    if (!usage.estimatedExhaustionAt && usage.averagePercentPerDay === null) {
+      output.push(line(paint('Estimated empty  not enough usage to project', 'dim')));
+    } else if (!usage.estimatedExhaustionAt) {
+      output.push(line('Estimated empty  after weekly reset'));
+    } else if (usage.exhaustsBeforeReset) {
+      output.push(sides(
+        paint('Estimated empty', 'bold'),
+        `in ${paint(formatDuration(usage.estimatedExhaustionAt - report.checkedAt), 'bold', 'yellow')}`,
+      ));
+      output.push(line(paint(`    ${formatDate(usage.estimatedExhaustionAt, report.timeZone)}`, 'dim')));
+    } else {
+      output.push(sides(
+        'Estimated empty  after weekly reset',
+        paint(formatDate(usage.estimatedExhaustionAt, report.timeZone, { seconds: false, weekday: false }), 'dim'),
+      ));
+    }
+  } else {
+    output.push(line('Weekly usage data is unavailable in this response.'));
+  }
+
+  output.push(separator());
+  const recommendation = report.recommendation;
+  const recommendationBadge = paint(
+    actionLabel[recommendation.action] ?? recommendation.action,
+    'bold',
+    actionStyle[recommendation.action] ?? 'dim',
+  );
+  output.push(sides(paint('SMART RESET PLAN', 'bold'), recommendationBadge));
+  output.push(textLine(recommendation.reason));
+  if (recommendation.recommendedAt) {
+    const recommendationRemaining = recommendation.recommendedAt - report.checkedAt;
+    output.push(sides(
+      '    Recommended time',
+      recommendationRemaining <= 0 ? paint('now', 'bold', 'red') : `in ${paint(formatDuration(recommendationRemaining), 'bold')}`,
+    ));
+    output.push(line(paint(`    ${formatDate(recommendation.recommendedAt, report.timeZone)}`, 'dim')));
+  }
+  if (recommendation.estimatedResetValuePercent !== null) {
+    output.push(line(
+      `    Estimated reset value  ${paint(`${numberLabel(recommendation.estimatedResetValuePercent)} points`, 'bold')}`,
+    ));
+  } else if (recommendation.projectedUsagePercent !== null) {
+    const projectionLabel = recommendation.action === 'WAIT_FOR_WEEKLY_RESET'
+      ? 'Projected at weekly reset'
+      : recommendation.action === 'SKIP_EXPIRING_RESET'
+        ? 'Projected at credit expiry'
+        : 'Projected usage then';
+    output.push(line(
+      `    ${projectionLabel}  ${paint(`${numberLabel(recommendation.projectedUsagePercent)}%`, 'bold')}`,
+    ));
+  }
+  if (report.nextSavedReset) {
+    const expiry = report.nextSavedReset.expiresAt;
+    output.push(sides(
+      '    Next saved full reset',
+      expiry ? `expires in ${paint(formatDuration(report.nextSavedReset.remainingMs), 'bold')}` : paint('expiry unknown', 'dim'),
+    ));
+    if (expiry) output.push(line(paint(`    ${formatDate(expiry, report.timeZone)}`, 'dim')));
+  } else {
+    output.push(line(paint('    No unexpired full reset is saved.', 'dim')));
+  }
 
   if (count === 0) {
     output.push(separator());

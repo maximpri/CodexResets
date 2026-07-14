@@ -25,5 +25,19 @@
       "expires_at": "2026-07-14T00:00:00Z"
     }
   ],
-  "total_earned_count": 0
+  "total_earned_count": 0,
+  "usage": {
+    "plan_type": "synthetic",
+    "rate_limit": {
+      "allowed": true,
+      "limit_reached": false,
+      "primary_window": {
+        "used_percent": 20,
+        "limit_window_seconds": 604800,
+        "reset_after_seconds": 520464,
+        "reset_at": 1784505600
+      },
+      "secondary_window": null
+    }
+  }
 }

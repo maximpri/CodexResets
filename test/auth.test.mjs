@@ -3,7 +3,12 @@ import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { clientIdFromAuth, fetchCredits, SafeError } from '../src/auth.mjs';
+import {
+  clientIdFromAuth,
+  fetchAccountData,
+  fetchCredits,
+  SafeError,
+} from '../src/auth.mjs';
 
 function jwt(payload) {
   return `header.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.signature`;
@@ -54,6 +59,65 @@ test('uses the existing access token without an unnecessary refresh', async () =
   assert.equal(requests.length, 1);
   assert.match(requests[0].url, /rate-limit-reset-credits$/);
   assert.equal(requests[0].options.headers.authorization, 'Bearer synthetic-current-token');
+});
+
+test('fetches credits and weekly usage with the same authenticated session', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'codex-reset-credits-'));
+  const authFile = join(directory, 'auth.json');
+  await writeFile(authFile, JSON.stringify({ tokens: {
+    access_token: 'synthetic-current-token',
+  } }), { mode: 0o600 });
+
+  const requests = [];
+  const mockFetch = async (url, options) => {
+    requests.push({ url, options });
+    if (url.endsWith('/wham/usage')) {
+      return new Response(JSON.stringify({ rate_limit: { allowed: true } }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ credits: [] }), { status: 200 });
+  };
+
+  const result = await fetchAccountData(authFile, mockFetch);
+  assert.deepEqual(result, {
+    credits: [],
+    usage: { rate_limit: { allowed: true } },
+  });
+  assert.equal(requests.length, 2);
+  assert.ok(requests.every(({ options }) => (
+    options.headers.authorization === 'Bearer synthetic-current-token'
+  )));
+});
+
+test('combined usage refreshes once when both account requests reject the session', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'codex-reset-credits-'));
+  const authFile = join(directory, 'auth.json');
+  await writeFile(authFile, JSON.stringify({ tokens: {
+    access_token: 'synthetic-expired-token',
+    refresh_token: 'synthetic-old-refresh',
+    id_token: jwt({ aud: 'synthetic-client' }),
+  } }), { mode: 0o600 });
+
+  const requests = [];
+  const mockFetch = async (url, options) => {
+    requests.push({ url, options });
+    if (url.includes('/oauth/token')) {
+      return new Response(JSON.stringify({ access_token: 'synthetic-new-token' }), { status: 200 });
+    }
+    if (options.headers.authorization === 'Bearer synthetic-expired-token') {
+      return new Response('{}', { status: 401 });
+    }
+    if (url.endsWith('/wham/usage')) {
+      return new Response(JSON.stringify({ rate_limit: { allowed: true } }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ credits: [] }), { status: 200 });
+  };
+
+  const result = await fetchAccountData(authFile, mockFetch);
+  assert.equal(result.usage.rate_limit.allowed, true);
+  assert.equal(requests.filter(({ url }) => url.includes('/oauth/token')).length, 1);
+  assert.equal(requests.length, 5);
+  const saved = JSON.parse(await readFile(authFile, 'utf8'));
+  assert.equal(saved.tokens.access_token, 'synthetic-new-token');
 });
 
 test('refreshes only after a 401 and atomically stores rotated tokens', async () => {

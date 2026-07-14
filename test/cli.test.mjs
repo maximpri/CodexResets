@@ -16,6 +16,9 @@ test('renders an offline fixture without credentials', () => {
   ], { encoding: 'utf8' });
 
   assert.match(output, /CODEX  \/  RESET CREDITS/);
+  assert.match(output, /WEEKLY USAGE/);
+  assert.match(output, /20% used/);
+  assert.match(output, /SMART RESET PLAN/);
   assert.match(output, /3 available credits/);
   assert.doesNotMatch(output, /example0000000/);
 });

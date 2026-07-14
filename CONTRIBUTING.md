@@ -10,7 +10,7 @@ Thanks for helping improve Codex Reset Credits.
 4. Run `npm test` and `npm run check`.
 5. Use the synthetic fixture and a fixed `--now` value for screenshots or output examples.
 
-The credits endpoint is undocumented. Treat observed response fields as untrusted input, preserve graceful fallbacks, and avoid claims about fields whose semantics are not publicly documented.
+The usage and credits endpoints are undocumented. Treat observed response fields as untrusted input, preserve graceful fallbacks, and avoid claims about fields whose semantics are not publicly documented.
 
 ## Pull requests
 
