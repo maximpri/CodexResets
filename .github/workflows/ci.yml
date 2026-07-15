@@ -21,5 +21,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      - run: shellcheck install.sh codexresets.sh check-reset-credits.sh
       - run: npm run security:secrets
       - run: npm test

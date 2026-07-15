@@ -8,7 +8,7 @@
     "codex-reset-credits": "src/cli.mjs"
   },
   "scripts": {
-    "check": "node --check src/cli.mjs && node --check src/auth.mjs && node --check src/history.mjs && node --check src/report.mjs && node --check scripts/scan-secrets.mjs",
+    "check": "node --check src/cli.mjs && node --check src/auth.mjs && node --check src/history.mjs && node --check src/report.mjs && node --check scripts/scan-secrets.mjs && bash -n install.sh codexresets.sh check-reset-credits.sh",
     "security:secrets": "node scripts/scan-secrets.mjs",
     "test": "node --test"
   },
@@ -25,6 +25,7 @@
   "files": [
     "src",
     "scripts",
+    "install.sh",
     "codexresets.sh",
     "check-reset-credits.sh",
     "README.md",

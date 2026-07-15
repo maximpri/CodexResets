@@ -77,6 +77,41 @@ It answers three practical questions:
 
 This utility cannot read credentials stored only in an operating-system keyring.
 
+### Quick install from GitHub (macOS and Linux)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/maximpri/CodexResets/main/install.sh | bash
+codexresets --help
+```
+
+The installer requires Bash, curl, Node.js, and npm. It downloads the selected CodexResets source tarball over HTTPS from GitHub and installs it with npm lifecycle scripts disabled. It never uses `sudo`, reads Codex credentials, or edits shell profiles. Review [install.sh](install.sh) before running it if you do not want to pipe remote code directly to a shell. Windows users can use the direct npm command below.
+
+If the configured global npm prefix is not writable, install under your user account instead:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/maximpri/CodexResets/main/install.sh \
+  | CODEXRESETS_PREFIX="$HOME/.local" bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Set `CODEXRESETS_REF` to a branch, tag, or commit to select a specific GitHub revision. The default is `main`.
+
+Rerun the installer to update to the latest selected revision. To remove a default-prefix installation:
+
+```bash
+npm uninstall --global codexresets
+```
+
+Add `--prefix "$HOME/.local"` when uninstalling an installation made with that custom prefix.
+
+### Install directly with npm
+
+```bash
+npm install --global --ignore-scripts \
+  https://api.github.com/repos/maximpri/CodexResets/tarball/main
+codexresets --help
+```
+
 ### Run from a checkout
 
 ```bash
@@ -264,7 +299,7 @@ Try `--ascii --color never`. For redirected output, color is disabled automatica
 npm test
 npm run check
 npm run security:secrets
-shellcheck codexresets.sh check-reset-credits.sh
+shellcheck install.sh codexresets.sh check-reset-credits.sh
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for pull-request guidance and [SECURITY.md](SECURITY.md) for private vulnerability reporting.

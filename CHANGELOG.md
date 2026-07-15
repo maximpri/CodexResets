@@ -13,6 +13,7 @@ All notable changes to this project will be documented here. The format follows 
 
 ### Added
 
+- Quick installation from GitHub with Node.js version validation, optional user-local prefixes, revision pinning, disabled npm lifecycle scripts, and post-install verification.
 - Weekly usage percentage, remaining capacity, and natural reset timing.
 - Five-hour usage reporting and short-window constraint analysis.
 - Day/night-weighted depletion estimates with confidence labels and timezone-aware peak usage.

@@ -12,6 +12,7 @@
 - Legacy history is migrated to the CodexResets filename only after the same strict schema validation.
 - Credential and history paths cannot be the same file.
 - Terminal text, including explicitly requested ID suffixes, has control and direction-changing characters neutralized before rendering.
+- The quick installer fetches only the selected CodexResets tarball from GitHub over HTTPS, invokes npm with lifecycle scripts disabled, and never requests `sudo` or edits shell profiles.
 - CI runs a dependency-free, high-confidence secret scan over tracked and unignored files. Findings include only a filename, line number, and secret type—not the matched value.
 - Repository fixtures and authentication tests use visibly synthetic identifiers and token values.
 
@@ -26,6 +27,7 @@ These controls reduce accidental disclosure but do not make saved credentials sa
 - Watch mode repeatedly contacts the fixed undocumented service endpoints. Do not leave its reports visible on a shared terminal.
 - Do not share output produced with `DEBUG=1`; the project and home paths are redacted, but diagnostic stacks may still reveal environment details.
 - Review saved API responses before using them as fixtures. Remove tokens, account data, emails, usernames, local paths, and real credit IDs.
+- Review `install.sh` before piping it from GitHub into a shell. Set `CODEXRESETS_REF` to a trusted tag or full commit when reproducible installation is more important than following `main`.
 
 ## Repository hygiene
 
