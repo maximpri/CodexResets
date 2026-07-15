@@ -77,20 +77,21 @@ It answers three practical questions:
 
 This utility cannot read credentials stored only in an operating-system keyring.
 
-### Quick install from GitHub (macOS and Linux)
+### Download and run the installer (macOS and Linux)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/maximpri/CodexResets/main/install.sh | bash
-codexresets --help
+curl -fsSL https://raw.githubusercontent.com/maximpri/CodexResets/main/install.sh \
+  -o codexresets-install.sh
+bash codexresets-install.sh
+codexresets
 ```
 
-The installer requires Bash, curl, Node.js, and npm. It downloads the selected CodexResets source tarball over HTTPS from GitHub and installs it with npm lifecycle scripts disabled. It never uses `sudo`, reads Codex credentials, or edits shell profiles. Review [install.sh](install.sh) before running it if you do not want to pipe remote code directly to a shell. Windows users can use the direct npm command below.
+The installer requires Bash, curl, Node.js, and npm. It downloads the selected CodexResets source tarball over HTTPS from GitHub and installs it with npm lifecycle scripts disabled. It never uses `sudo`, reads Codex credentials, or edits shell profiles. You can review the downloaded `codexresets-install.sh` before running it. Delete it after installation if you no longer need it.
 
 If the configured global npm prefix is not writable, install under your user account instead:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/maximpri/CodexResets/main/install.sh \
-  | CODEXRESETS_PREFIX="$HOME/.local" bash
+CODEXRESETS_PREFIX="$HOME/.local" bash codexresets-install.sh
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
@@ -104,28 +105,6 @@ npm uninstall --global codexresets
 
 Add `--prefix "$HOME/.local"` when uninstalling an installation made with that custom prefix.
 
-### Install directly with npm
-
-```bash
-npm install --global --ignore-scripts \
-  https://api.github.com/repos/maximpri/CodexResets/tarball/main
-codexresets --help
-```
-
-### Run from a checkout
-
-```bash
-cd CodexResets
-./codexresets.sh
-```
-
-### Install from a local checkout
-
-```bash
-npm install --global .
-codexresets
-```
-
 The system time zone is detected automatically. Override it with any valid IANA name:
 
 ```bash
@@ -135,8 +114,6 @@ codexresets --record
 codexresets --watch 15m --record --notify
 codexresets --help
 ```
-
-The earlier `codex-reset-credits` command and `check-reset-credits.sh` wrapper remain available as compatibility aliases.
 
 Credit identifiers are hidden by default. Use `--show-ids` only when you genuinely need them. For issue reports and screenshots, keep the default.
 

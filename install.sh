@@ -11,7 +11,8 @@ usage() {
     'CodexResets quick installer' \
     '' \
     'Usage:' \
-    '  curl -fsSL https://raw.githubusercontent.com/maximpri/CodexResets/main/install.sh | bash' \
+    '  curl -fsSL https://raw.githubusercontent.com/maximpri/CodexResets/main/install.sh -o codexresets-install.sh' \
+    '  bash codexresets-install.sh' \
     '' \
     'Environment:' \
     '  CODEXRESETS_PREFIX  Alternative npm installation prefix' \

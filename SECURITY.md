@@ -27,7 +27,7 @@ These controls reduce accidental disclosure but do not make saved credentials sa
 - Watch mode repeatedly contacts the fixed undocumented service endpoints. Do not leave its reports visible on a shared terminal.
 - Do not share output produced with `DEBUG=1`; the project and home paths are redacted, but diagnostic stacks may still reveal environment details.
 - Review saved API responses before using them as fixtures. Remove tokens, account data, emails, usernames, local paths, and real credit IDs.
-- Review `install.sh` before piping it from GitHub into a shell. Set `CODEXRESETS_REF` to a trusted tag or full commit when reproducible installation is more important than following `main`.
+- Review the downloaded `codexresets-install.sh` before running it. Set `CODEXRESETS_REF` to a trusted tag or full commit when reproducible installation is more important than following `main`.
 
 ## Repository hygiene
 
