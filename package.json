@@ -7,7 +7,8 @@
     "codex-reset-credits": "src/cli.mjs"
   },
   "scripts": {
-    "check": "node --check src/cli.mjs && node --check src/auth.mjs && node --check src/report.mjs",
+    "check": "node --check src/cli.mjs && node --check src/auth.mjs && node --check src/history.mjs && node --check src/report.mjs && node --check scripts/scan-secrets.mjs",
+    "security:secrets": "node scripts/scan-secrets.mjs",
     "test": "node --test"
   },
   "engines": {
@@ -22,6 +23,7 @@
   "license": "MIT",
   "files": [
     "src",
+    "scripts",
     "check-reset-credits.sh",
     "README.md",
     "LICENSE",

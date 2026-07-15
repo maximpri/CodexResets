@@ -1,4 +1,4 @@
-import { chmod, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { chmod, readFile, realpath, rename, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -7,9 +7,10 @@ export const USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 const TOKEN_URL = 'https://auth.openai.com/api/accounts/oauth/token';
 
 export class SafeError extends Error {
-  constructor(message, { cause } = {}) {
+  constructor(message, { cause, retryable = false } = {}) {
     super(message, { cause });
     this.name = 'SafeError';
+    this.retryable = Boolean(retryable);
   }
 }
 
@@ -43,7 +44,9 @@ async function parseResponse(response) {
   try {
     return JSON.parse(text);
   } catch {
-    throw new SafeError(`OpenAI returned invalid JSON (HTTP ${response.status}).`);
+    throw new SafeError(`OpenAI returned invalid JSON (HTTP ${response.status}).`, {
+      retryable: response.status === 429 || response.status >= 500,
+    });
   }
 }
 
@@ -65,16 +68,16 @@ async function saveAuth(authFile, auth, expectedAuth) {
   const destination = await realpath(authFile).catch(() => authFile);
   const directory = dirname(destination);
   const temporary = join(directory, `.${basename(destination)}.${process.pid}.${randomUUID()}.tmp`);
-  let mode = 0o600;
 
   try {
-    mode = (await stat(destination)).mode & 0o777;
     await writeFile(temporary, `${JSON.stringify(auth, null, 2)}\n`, {
       encoding: 'utf8',
       mode: 0o600,
       flag: 'wx',
     });
-    await chmod(temporary, mode);
+    // Never carry forward a permissive mode from an existing credential file.
+    // chmod also guarantees 0600 when the process umask is unusually restrictive.
+    await chmod(temporary, 0o600);
 
     // Do not overwrite a session that Codex refreshed while this request was in flight.
     const current = JSON.parse(await readFile(destination, 'utf8'));
@@ -112,13 +115,19 @@ async function refreshSession(authFile, auth, fetchImpl) {
       }),
     });
   } catch (error) {
-    throw new SafeError('Could not reach the OpenAI authentication service.', { cause: error });
+    throw new SafeError('Could not reach the OpenAI authentication service.', {
+      cause: error,
+      retryable: true,
+    });
   }
 
   const body = await parseResponse(response);
   if (!response.ok || typeof body.access_token !== 'string' || !body.access_token) {
     const suffix = safeErrorCode(body?.error?.code ?? body?.error);
-    throw new SafeError(`The Codex session could not be refreshed${suffix}. Run \`codex login\` and try again.`);
+    throw new SafeError(
+      `The Codex session could not be refreshed${suffix}. Run \`codex login\` and try again.`,
+      { retryable: response.status === 429 || response.status >= 500 },
+    );
   }
 
   const nextAuth = structuredClone(auth);
@@ -143,7 +152,10 @@ async function requestResource(url, label, accessToken, fetchImpl) {
       },
     });
   } catch (error) {
-    throw new SafeError(`Could not reach the Codex ${label} service.`, { cause: error });
+    throw new SafeError(`Could not reach the Codex ${label} service.`, {
+      cause: error,
+      retryable: true,
+    });
   }
 
   if (response.status === 401) return { unauthorized: true };
@@ -151,7 +163,10 @@ async function requestResource(url, label, accessToken, fetchImpl) {
   const body = await parseResponse(response);
   if (!response.ok) {
     const suffix = safeErrorCode(body?.error?.code ?? body?.error);
-    throw new SafeError(`The Codex ${label} service returned HTTP ${response.status}${suffix}.`);
+    throw new SafeError(
+      `The Codex ${label} service returned HTTP ${response.status}${suffix}.`,
+      { retryable: response.status === 429 || response.status >= 500 },
+    );
   }
   return { body, unauthorized: false };
 }

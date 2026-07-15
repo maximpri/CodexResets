@@ -9,6 +9,7 @@ const DAYTIME_START_HOUR = 8;
 const DAYTIME_END_HOUR = 22;
 const DAYTIME_USAGE_WEIGHT = 1.25;
 const NIGHT_USAGE_WEIGHT = 0.65;
+const METHODOLOGY_VERSION = 2;
 
 const ANSI = {
   reset: '\u001b[0m',
@@ -154,7 +155,46 @@ function windowDurationMs(window) {
   return null;
 }
 
-function normalizeUsageWindow(data, checkedAt, timeZone, definition) {
+function historicalPaceFor(usageWindow, checkedAt, timeZone, snapshots) {
+  const historyKey = usageWindow.name === 'five_hour' ? 'five_hour' : 'weekly';
+  const currentResetMs = usageWindow.resetsAt.getTime();
+  const points = (Array.isArray(snapshots) ? snapshots : [])
+    .map((snapshot) => {
+      const observedAt = timestampDate(snapshot?.checked_at);
+      const window = snapshot?.[historyKey];
+      const usedPercent = finiteNumber(window?.used_percent);
+      const resetsAt = timestampDate(window?.resets_at);
+      if (!observedAt || !resetsAt || usedPercent === null) return null;
+      if (observedAt >= checkedAt || observedAt < usageWindow.startedAt) return null;
+      if (Math.abs(resetsAt.getTime() - currentResetMs) > MINUTE) return null;
+      return { observedAt, usedPercent: clamp(usedPercent, 0, 100) };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.observedAt - b.observedAt);
+  points.push({ observedAt: checkedAt, usedPercent: usageWindow.usedPercent });
+
+  let segmentStart = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    if (points[index].usedPercent < points[index - 1].usedPercent) segmentStart = index;
+  }
+  const segment = points.slice(segmentStart);
+  if (segment.length < 2) return null;
+  const first = segment[0];
+  const last = segment.at(-1);
+  const observedMs = last.observedAt - first.observedAt;
+  if (observedMs < 15 * MINUTE || observedMs > usageWindow.windowMs) return null;
+  const usedDelta = last.usedPercent - first.usedPercent;
+  if (usedDelta === 0 && observedMs < usageWindow.windowMs / 2) return null;
+  const weightedMs = weightedDurationMs(first.observedAt, last.observedAt, timeZone);
+  if (weightedMs <= 0) return null;
+  return {
+    averagePercentPerDay: usedDelta / (weightedMs / DAY),
+    sampleCount: segment.length,
+    observedMs,
+  };
+}
+
+function normalizeUsageWindow(data, checkedAt, timeZone, definition, snapshots) {
   const usage = data?.usage ?? data;
   const rateLimit = usage?.rate_limit ?? usage?.rateLimit;
   if (!rateLimit || typeof rateLimit !== 'object') return null;
@@ -196,9 +236,31 @@ function normalizeUsageWindow(data, checkedAt, timeZone, definition) {
   const weightedElapsedMs = validElapsed
     ? weightedDurationMs(startedAt, checkedAt, timeZone)
     : null;
-  const averagePercentPerDay = validElapsed && usedPercent > 0
+  let averagePercentPerDay = validElapsed && usedPercent > 0
     ? usedPercent / (weightedElapsedMs / DAY)
     : null;
+  let paceSource = averagePercentPerDay === null ? 'insufficient_data' : 'window_average';
+  let historySampleCount = 0;
+  let historyObservedMs = 0;
+  const usageWindowIdentity = {
+    name: definition.name,
+    startedAt,
+    resetsAt,
+    windowMs: candidate.durationMs,
+    usedPercent,
+  };
+  const historicalPace = historicalPaceFor(
+    usageWindowIdentity,
+    checkedAt,
+    timeZone,
+    snapshots,
+  );
+  if (historicalPace) {
+    averagePercentPerDay = historicalPace.averagePercentPerDay;
+    paceSource = 'recorded_history';
+    historySampleCount = historicalPace.sampleCount;
+    historyObservedMs = historicalPace.observedMs;
+  }
   const estimatedExhaustionAt = usedPercent >= 100
     ? new Date(checkedAt)
     : averagePercentPerDay === null || averagePercentPerDay <= 0
@@ -213,12 +275,16 @@ function normalizeUsageWindow(data, checkedAt, timeZone, definition) {
   const projectedUsedAtReset = averagePercentPerDay === null
     ? usedPercent
     : clamp(usedPercent + averagePercentPerDay * weightedRemainingMs / DAY, 0, 100);
-  const confidence = averagePercentPerDay === null
-    || elapsedMs < candidate.durationMs * (6 * HOUR / WEEK)
-    ? 'LOW'
-    : elapsedMs < candidate.durationMs * (DAY / WEEK)
-      ? 'MEDIUM'
-      : 'HIGH';
+  const confidence = paceSource === 'recorded_history'
+    ? historySampleCount >= 4 && historyObservedMs >= candidate.durationMs / 4
+      ? 'HIGH'
+      : 'MEDIUM'
+    : averagePercentPerDay === null
+      || elapsedMs < candidate.durationMs * (6 * HOUR / WEEK)
+      ? 'LOW'
+      : elapsedMs < candidate.durationMs * (DAY / WEEK)
+        ? 'MEDIUM'
+        : 'HIGH';
 
   return {
     name: definition.name,
@@ -234,6 +300,9 @@ function normalizeUsageWindow(data, checkedAt, timeZone, definition) {
     averagePercentPerHour: averagePercentPerDay === null
       ? null
       : averagePercentPerDay / 24,
+    paceSource,
+    historySampleCount,
+    historyObservedMs,
     usageProfile: {
       dayStartHour: DAYTIME_START_HOUR,
       dayEndHour: DAYTIME_END_HOUR,
@@ -249,7 +318,7 @@ function normalizeUsageWindow(data, checkedAt, timeZone, definition) {
   };
 }
 
-function normalizeUsageWindows(data, checkedAt, timeZone) {
+function normalizeUsageWindows(data, checkedAt, timeZone, snapshots) {
   return {
     fiveHourUsage: normalizeUsageWindow(data, checkedAt, timeZone, {
       name: 'five_hour',
@@ -257,14 +326,14 @@ function normalizeUsageWindows(data, checkedAt, timeZone) {
       targetMs: FIVE_HOURS,
       minimumMs: 3 * HOUR,
       maximumMs: 7 * HOUR,
-    }),
+    }, snapshots),
     weeklyUsage: normalizeUsageWindow(data, checkedAt, timeZone, {
       name: 'weekly',
       label: 'Weekly',
       targetMs: WEEK,
       minimumMs: 5 * DAY,
       maximumMs: 9 * DAY,
-    }),
+    }, snapshots),
   };
 }
 
@@ -490,7 +559,7 @@ function creditId(credit) {
   return String(credit?.id ?? credit?.credit_id ?? '');
 }
 
-export function normalizeReport(data, { now = new Date(), timeZone } = {}) {
+export function normalizeReport(data, { now = new Date(), timeZone, history = [] } = {}) {
   validateTimeZone(timeZone);
   const checkedAt = new Date(now);
   if (!Number.isFinite(checkedAt.getTime())) throw new Error('Invalid value for --now.');
@@ -515,7 +584,12 @@ export function normalizeReport(data, { now = new Date(), timeZone } = {}) {
       return a.expiresAt - b.expiresAt;
     });
 
-  const { fiveHourUsage, weeklyUsage } = normalizeUsageWindows(data, checkedAt, timeZone);
+  const { fiveHourUsage, weeklyUsage } = normalizeUsageWindows(
+    data,
+    checkedAt,
+    timeZone,
+    history,
+  );
   const { nextSavedReset, recommendation } = buildRecommendation(
     fiveHourUsage,
     weeklyUsage,
@@ -550,8 +624,9 @@ function terminalSafe(value) {
 }
 
 function idLabel(id) {
-  if (!id) return 'ID unavailable';
-  const tail = id.includes('_') ? id.slice(id.lastIndexOf('_') + 1) : id;
+  const safeId = terminalSafe(id);
+  if (!safeId) return 'ID unavailable';
+  const tail = safeId.includes('_') ? safeId.slice(safeId.lastIndexOf('_') + 1) : safeId;
   return `ID …${tail.slice(-8)}`;
 }
 
@@ -577,6 +652,8 @@ function usageWindowJson(usage, paceUnit) {
     exhausts_before_reset: usage.exhaustsBeforeReset,
     projected_used_percent_at_reset: Number(usage.projectedUsedAtReset.toFixed(2)),
     projection_confidence: usage.confidence,
+    pace_source: usage.paceSource,
+    history_sample_count: usage.historySampleCount,
     usage_profile: {
       daytime_local_hours: `${String(usage.usageProfile.dayStartHour).padStart(2, '0')}:00-${String(usage.usageProfile.dayEndHour).padStart(2, '0')}:00`,
       daytime_weight: usage.usageProfile.dayWeight,
@@ -588,6 +665,7 @@ function usageWindowJson(usage, paceUnit) {
 export function renderJson(report, { showIds = false } = {}) {
   const recommendation = report.recommendation;
   const output = {
+    methodology_version: METHODOLOGY_VERSION,
     checked_at: report.checkedAt.toISOString(),
     time_zone: report.timeZone,
     five_hour_usage: usageWindowJson(report.fiveHourUsage, 'hour'),
@@ -710,8 +788,11 @@ export function renderTable(report, options = {}) {
       const pace = paceUnit === 'hour'
         ? usage.averagePercentPerHour
         : usage.averagePercentPerDay;
+      const paceBasis = usage.paceSource === 'recorded_history'
+        ? 'recorded delta'
+        : 'day/night weighted';
       output.push(sides(
-        `Pace  ${paint(`${numberLabel(pace, 2)} points/${paceUnit}`, 'bold')} day/night weighted`,
+        `Pace  ${paint(`${numberLabel(pace, 2)} points/${paceUnit}`, 'bold')} ${paceBasis}`,
         paint(`${usage.confidence} confidence`, usage.confidence === 'HIGH' ? 'green' : 'dim'),
       ));
     }

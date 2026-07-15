@@ -8,4 +8,5 @@ coverage/
 auth.json
 *auth*.json
 credits-response*.json
+reset-credits-history*.json
 private/

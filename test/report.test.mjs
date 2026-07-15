@@ -200,6 +200,67 @@ test('projects higher daytime usage and lower overnight usage in the selected ti
   );
 });
 
+test('uses sanitized recorded deltas when history matches the current reset epoch', () => {
+  const report = normalizeReport(fixture, {
+    now,
+    timeZone: 'UTC',
+    history: [{
+      checked_at: '2026-07-13T22:25:36.000Z',
+      five_hour: {
+        used_percent: 18,
+        resets_at: '2026-07-14T03:00:00.000Z',
+      },
+      weekly: {
+        used_percent: 10,
+        resets_at: '2026-07-20T00:00:00.000Z',
+      },
+    }],
+  });
+  assert.equal(report.fiveHourUsage.paceSource, 'recorded_history');
+  assert.equal(report.weeklyUsage.paceSource, 'recorded_history');
+  assert.equal(report.weeklyUsage.historySampleCount, 2);
+  assert.ok(report.weeklyUsage.averagePercentPerDay > 300);
+  assert.equal(report.recommendation.constrainingWindow, 'weekly');
+  assert.ok(report.recommendation.recommendedAt < new Date('2026-07-15T00:00:00Z'));
+});
+
+test('ignores history from a previous reset epoch', () => {
+  const report = normalizeReport(fixture, {
+    now,
+    timeZone: 'UTC',
+    history: [{
+      checked_at: '2026-07-13T22:25:36.000Z',
+      weekly: {
+        used_percent: 90,
+        resets_at: '2026-07-19T00:00:00.000Z',
+      },
+    }],
+  });
+  assert.equal(report.weeklyUsage.paceSource, 'window_average');
+  assert.equal(report.weeklyUsage.historySampleCount, 0);
+});
+
+test('does not let a short zero-delta sample erase the window-average forecast', () => {
+  const report = normalizeReport(fixture, {
+    now,
+    timeZone: 'UTC',
+    history: [{
+      checked_at: '2026-07-13T22:25:36.000Z',
+      five_hour: {
+        used_percent: 20,
+        resets_at: '2026-07-14T03:00:30.000Z',
+      },
+      weekly: {
+        used_percent: 20,
+        resets_at: '2026-07-20T00:00:30.000Z',
+      },
+    }],
+  });
+  assert.equal(report.fiveHourUsage.paceSource, 'window_average');
+  assert.equal(report.weeklyUsage.paceSource, 'window_average');
+  assert.ok(report.weeklyUsage.averagePercentPerDay > 0);
+});
+
 test('waits for the weekly reset when saved capacity outlives the window', () => {
   const data = {
     credits: [{
@@ -243,12 +304,13 @@ test('terminal output neutralizes control and direction-changing characters', ()
   const unsafe = {
     credits: [{
       status: 'available',
+      id: 'unsafe_\u001b[31mBAD',
       title: 'Safe\u001b[31m\n\u202e title',
       expires_at: '2026-07-14T00:00:00Z',
     }],
   };
   const report = normalizeReport(unsafe, { now, timeZone: 'UTC' });
-  const output = renderTable(report, { color: false, width: 72 });
+  const output = renderTable(report, { color: false, width: 72, showIds: true });
   assert.doesNotMatch(output, /\u001b|\u202e/);
   assert.match(output, /Safe title/);
 });
@@ -280,8 +342,11 @@ test('every uncolored table line has the requested width', () => {
 test('JSON output is normalized and private by default', () => {
   const report = normalizeReport(fixture, { now, timeZone: 'UTC' });
   const privateOutput = JSON.parse(renderJson(report));
+  assert.equal(privateOutput.methodology_version, 2);
   assert.equal(privateOutput.five_hour_usage.used_percent, 20);
   assert.equal(privateOutput.five_hour_usage.window_minutes, 300);
+  assert.equal(privateOutput.five_hour_usage.pace_source, 'window_average');
+  assert.equal(privateOutput.five_hour_usage.history_sample_count, 0);
   assert.equal(privateOutput.weekly_usage.used_percent, 20);
   assert.equal(privateOutput.weekly_usage.exhausts_before_reset, true);
   assert.equal(privateOutput.recommendation.action, 'USE_NEAR_LIMIT');
