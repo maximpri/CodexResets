@@ -1,12 +1,18 @@
 # Codex Reset Credits
 
-A small, privacy-conscious Codex usage planner for the terminal. It shows the current weekly limit and natural reset, estimates usage pace and depletion, recommends when a saved full reset will recover the most capacity, and sorts saved resets by expiry.
+A small, privacy-conscious Codex usage planner for the terminal. It shows the current five-hour and weekly limits, estimates usage pace and depletion, recommends when a saved full reset will recover the most capacity, and sorts saved resets by expiry.
 
 ```text
 ╭──────────────────────────────────────────────────────────────────────────────────────────────╮
 │ CODEX  /  RESET CREDITS                                                                      │
 │ 3 available credits                                             checked 2026-07-13 23:25 UTC │
 │ UTC                                                                                          │
+├──────────────────────────────────────────────────────────────────────────────────────────────┤
+│ 5-HOUR USAGE                                                                                 │
+│ 20% used  ·  80% left                                                       resets in 3h 34m │
+│     Tue 2026-07-14 03:00:00 UTC                                                              │
+│ Pace  21.57 points/hour day/night weighted                                   HIGH confidence │
+│ Estimated empty  after 5-hour reset                                                          │
 ├──────────────────────────────────────────────────────────────────────────────────────────────┤
 │ WEEKLY USAGE                                                                                 │
 │ 20% used  ·  80% left                                                    resets in 6d 0h 34m │
@@ -16,10 +22,10 @@ A small, privacy-conscious Codex usage planner for the terminal. It shows the cu
 │     Fri 2026-07-17 21:32:57 UTC                                                              │
 ├──────────────────────────────────────────────────────────────────────────────────────────────┤
 │ SMART RESET PLAN                                                                  NEAR LIMIT │
-│ Current pace reaches the near-limit target before the natural weekly reset.                  │
+│ Weekly usage reaches the near-limit target before its natural reset.                         │
 │     Recommended time                                                           in 3d 17h 23m │
 │     Fri 2026-07-17 16:49:25 UTC                                                              │
-│     Estimated reset value  95 points                                                         │
+│     Weekly reset value  95 points                                                            │
 │     Next saved full reset                                               expires in 3d 21h 1m │
 │     Fri 2026-07-17 20:26:53 UTC                                                              │
 ├──────────────────────────────────────────────────────────────────────────────────────────────┤
@@ -110,7 +116,7 @@ Do not attach an unreviewed API response to a public issue. Remove identifiers a
 - The tool reads the Codex credential file locally and sends its access token only to OpenAI's ChatGPT usage and reset-credit services.
 - It never prints access tokens, refresh tokens, raw authentication responses, or raw API error bodies.
 - It tries the existing access token first. Only after an HTTP 401 does it refresh the session and atomically update the same credential file, preserving its permissions.
-- Account IDs, email, plan metadata, and spend-control details returned with usage are discarded; only the weekly rate-limit window is normalized.
+- Account IDs, email, plan metadata, and spend-control details returned with usage are discarded; only the five-hour and weekly rate-limit windows are normalized.
 - JSON output omits credit IDs unless `--show-ids` is explicitly set.
 - The repository contains synthetic fixtures only. No credential files, API responses, account IDs, usernames, home-directory paths, or real credit IDs should be committed.
 
@@ -118,15 +124,16 @@ Treat `~/.codex/auth.json` like a password. Never copy it into this repository, 
 
 ## Accuracy
 
-The weekly percentage and reset timestamp come directly from the account usage response. The forecast is deliberately labeled as an estimate:
+The five-hour and weekly percentages and reset timestamps come directly from the account usage response. The forecast is deliberately labeled as an estimate:
 
-- The command finds the primary or secondary window closest to seven days.
-- Average pace is calibrated from usage in the elapsed part of the weekly window. The elapsed time is weighted by local hour: `08:00–22:00` uses a `1.25×` daytime weight and overnight uses `0.65×`. These weights average to one across a normal 24-hour day.
+- The command identifies the primary or secondary windows by duration: the candidate closest to five hours becomes the short window, and the candidate closest to seven days becomes the weekly window.
+- Average pace is calibrated independently from usage in the elapsed part of each window. The elapsed time is weighted by local hour: `08:00–22:00` uses a `1.25×` daytime weight and overnight uses `0.65×`. These weights average to one across a normal 24-hour day.
+- Five-hour pace is displayed in percentage points per hour; weekly pace is displayed in percentage points per day.
 - Projections apply that same profile in the selected display time zone, so usage accumulates faster during the day and more slowly overnight. This is a planning assumption, not detected personal history; no usage history is stored.
 - `LOW`, `MEDIUM`, and `HIGH` describe how much of the current window has elapsed, not a statistical guarantee.
-- The preferred full-reset target is 95% usage, leaving a small buffer for forecast error while recovering nearly all weekly capacity.
-- The estimated reset value is the projected percentage points recovered by resetting usage to zero at the recommended time.
-- If the earliest saved full reset expires before the 95% target and before the natural weekly reset, the recommendation moves to 15 minutes before expiry so its projected value is not lost. A reset with zero projected recovery value is skipped. If the natural weekly reset comes first, the saved reset is kept for the next window.
+- The preferred full-reset target is 95% usage. The recommendation uses whichever active window is projected to reach that target first before its own natural reset.
+- Reset value is reported separately for the five-hour and weekly windows when each window is still active at the recommended time.
+- If the earliest saved full reset expires before the next 95% target and before the weekly reset, the recommendation moves to 15 minutes before expiry so its projected value is not lost. A reset with zero projected recovery value is skipped. If the weekly reset comes first, the saved reset is kept for the next window.
 
 The recommendation is planning guidance, not a guarantee. A workload change can move the depletion time substantially, so rerun the command before consuming a reset.
 
@@ -139,7 +146,7 @@ Saved-credit urgency is based only on time remaining:
 | `TODAY` | 24 hours or less |
 | `LATER` | More than 24 hours |
 
-The report does not turn credit expiry into a percentage bar. The only displayed percentage is the server-provided weekly usage value (plus clearly labeled projections derived from it). It also omits the credits API's `total_earned_count`, because that field can be absent or conflict with the available-credit list and its public semantics are not documented.
+The report does not turn credit expiry into a percentage bar. Displayed usage percentages come from the server-provided five-hour and weekly windows, plus clearly labeled projections derived from them. It also omits the credits API's `total_earned_count`, because that field can be absent or conflict with the available-credit list and its public semantics are not documented.
 
 ## Project status and compatibility
 

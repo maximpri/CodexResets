@@ -33,11 +33,16 @@
       "limit_reached": false,
       "primary_window": {
         "used_percent": 20,
+        "limit_window_seconds": 18000,
+        "reset_after_seconds": 12864,
+        "reset_at": 1783998000
+      },
+      "secondary_window": {
+        "used_percent": 20,
         "limit_window_seconds": 604800,
         "reset_after_seconds": 520464,
         "reset_at": 1784505600
-      },
-      "secondary_window": null
+      }
     }
   }
 }

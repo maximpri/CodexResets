@@ -21,6 +21,11 @@ test('normalizes and sorts available credits without trusting total_earned_count
 
 test('normalizes weekly usage and projects depletion with a day/night-weighted pace', () => {
   const report = normalizeReport(fixture, { now, timeZone: 'UTC' });
+  assert.equal(report.fiveHourUsage.usedPercent, 20);
+  assert.equal(report.fiveHourUsage.remainingPercent, 80);
+  assert.equal(report.fiveHourUsage.resetsAt.toISOString(), '2026-07-14T03:00:00.000Z');
+  assert.ok(Math.abs(report.fiveHourUsage.averagePercentPerHour - 21.57) < 0.01);
+  assert.equal(report.fiveHourUsage.exhaustsBeforeReset, false);
   assert.equal(report.weeklyUsage.usedPercent, 20);
   assert.equal(report.weeklyUsage.remainingPercent, 80);
   assert.equal(report.weeklyUsage.resetsAt.toISOString(), '2026-07-20T00:00:00.000Z');
@@ -52,8 +57,45 @@ test('finds a weekly secondary window when the primary window is shorter', () =>
     },
   };
   const report = normalizeReport(data, { now, timeZone: 'UTC' });
+  assert.equal(report.fiveHourUsage.kind, 'primary');
+  assert.equal(report.fiveHourUsage.usedPercent, 90);
   assert.equal(report.weeklyUsage.kind, 'secondary');
   assert.equal(report.weeklyUsage.usedPercent, 25);
+});
+
+test('lets the five-hour window drive an earlier near-limit recommendation', () => {
+  const data = structuredClone(fixture);
+  data.usage.rate_limit.primary_window.used_percent = 80;
+  const report = normalizeReport(data, { now, timeZone: 'UTC' });
+  assert.equal(report.recommendation.action, 'USE_NEAR_LIMIT');
+  assert.equal(report.recommendation.constrainingWindow, 'five_hour');
+  assert.ok(report.recommendation.recommendedAt < report.fiveHourUsage.resetsAt);
+  assert.equal(report.recommendation.estimatedResetValues.fiveHourPercent, 95);
+  assert.ok(report.recommendation.estimatedResetValues.weeklyPercent > 20);
+});
+
+test('analyzes a five-hour window when weekly usage is unavailable', () => {
+  const data = {
+    credits: [{
+      status: 'available',
+      title: 'Full reset',
+      expires_at: '2026-07-15T12:00:00Z',
+    }],
+    usage: {
+      rate_limit: {
+        primary_window: {
+          used_percent: 10,
+          limit_window_seconds: 18_000,
+          reset_at: Date.parse('2026-07-14T03:00:00Z') / 1000,
+        },
+      },
+    },
+  };
+  const report = normalizeReport(data, { now, timeZone: 'UTC' });
+  assert.equal(report.weeklyUsage, null);
+  assert.equal(report.fiveHourUsage.usedPercent, 10);
+  assert.equal(report.recommendation.action, 'WAIT_FOR_FIVE_HOUR_RESET');
+  assert.equal(report.recommendation.constrainingWindow, 'five_hour');
 });
 
 test('moves reset advice before an expiring saved credit', () => {
@@ -180,7 +222,7 @@ test('waits for the weekly reset when saved capacity outlives the window', () =>
   assert.equal(report.recommendation.projectionAt.toISOString(), '2026-07-20T00:00:00.000Z');
 });
 
-test('recommends an immediate full reset at the near-limit target', () => {
+test('recommends an immediate full reset when the five-hour window reaches the target', () => {
   const data = structuredClone(fixture);
   data.usage.rate_limit.primary_window.used_percent = 95;
   const report = normalizeReport(data, { now, timeZone: 'UTC' });
@@ -218,11 +260,13 @@ test('table output hides identifiers and uses server usage without decorative pr
   assert.doesNotMatch(output, /total earned/i);
   assert.doesNotMatch(output, /█|░/);
   assert.match(output, /20% used/);
+  assert.match(output, /5-HOUR USAGE/);
+  assert.match(output, /points\/hour/);
   assert.match(output, /day\/night weighted/);
   assert.match(output, /Estimated empty/);
   assert.match(output, /SMART RESET PLAN/);
   assert.match(output, /NEAR LIMIT/);
-  assert.match(output, /Estimated reset value  95 points/);
+  assert.match(output, /Weekly reset value  95 points/);
   assert.match(output, /3 available credits/);
   assert.match(output, /in 3d 21h 1m/);
 });
@@ -236,10 +280,15 @@ test('every uncolored table line has the requested width', () => {
 test('JSON output is normalized and private by default', () => {
   const report = normalizeReport(fixture, { now, timeZone: 'UTC' });
   const privateOutput = JSON.parse(renderJson(report));
+  assert.equal(privateOutput.five_hour_usage.used_percent, 20);
+  assert.equal(privateOutput.five_hour_usage.window_minutes, 300);
   assert.equal(privateOutput.weekly_usage.used_percent, 20);
   assert.equal(privateOutput.weekly_usage.exhausts_before_reset, true);
   assert.equal(privateOutput.recommendation.action, 'USE_NEAR_LIMIT');
+  assert.equal(privateOutput.recommendation.constraining_window, 'weekly');
   assert.equal(privateOutput.recommendation.estimated_reset_value_percent, 95);
+  assert.equal(privateOutput.recommendation.estimated_reset_values.five_hour_percent, null);
+  assert.equal(privateOutput.recommendation.estimated_reset_values.weekly_percent, 95);
   assert.equal(privateOutput.weekly_usage.usage_profile.daytime_local_hours, '08:00-22:00');
   assert.equal(privateOutput.next_saved_full_reset.expires_at, '2026-07-17T20:26:53.000Z');
   assert.equal(Object.hasOwn(privateOutput.next_saved_full_reset, 'id'), false);

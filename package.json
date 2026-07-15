@@ -1,7 +1,7 @@
 {
   "name": "codex-reset-credits",
   "version": "1.0.0",
-  "description": "A privacy-conscious terminal planner for Codex weekly usage and full-reset credits.",
+  "description": "A privacy-conscious terminal planner for Codex five-hour and weekly usage limits.",
   "type": "module",
   "bin": {
     "codex-reset-credits": "src/cli.mjs"
