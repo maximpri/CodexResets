@@ -1,6 +1,26 @@
 # Codex Reset Credits
 
-A small, privacy-conscious Codex usage planner for the terminal. It shows the current five-hour and weekly limits, estimates usage pace and depletion, recommends when a saved full reset will recover the most capacity, and sorts saved resets by expiry.
+A privacy-conscious terminal planner for Codex usage limits and saved full-reset credits.
+
+> [!IMPORTANT]
+> This is an independent community project, not an official OpenAI product. It uses undocumented ChatGPT web endpoints that may change without notice. The supported interface for viewing usage and consuming a reset remains the `/usage` command in the Codex TUI.
+
+It answers three practical questions:
+
+- How much of the five-hour and weekly limits is left?
+- At the current day/night-weighted pace, which window is likely to become constrained first?
+- When should the next saved full reset be used to recover the most value before it expires?
+
+## Highlights
+
+- Reports both five-hour and weekly usage, natural reset times, remaining capacity, and projected depletion.
+- Builds a timezone-aware forecast with higher daytime usage and lower overnight usage.
+- Recommends using, saving, or skipping the next full reset based on the first constrained window, reset value, natural resets, and credit expiry.
+- Keeps credit IDs private by default and discards unrelated account metadata from the usage response.
+- Supports readable terminal output, normalized JSON, deterministic offline fixtures, narrow terminals, ASCII borders, and optional color.
+- Remains read-only for reset credits: it never consumes a credit.
+
+## Example report
 
 ```text
 ╭──────────────────────────────────────────────────────────────────────────────────────────────╮
@@ -45,7 +65,9 @@ A small, privacy-conscious Codex usage planner for the terminal. It shows the cu
 ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
-## Requirements
+## Quick start
+
+### Requirements
 
 - Node.js 18 or newer
 - A current Codex CLI sign-in using ChatGPT
@@ -53,16 +75,14 @@ A small, privacy-conscious Codex usage planner for the terminal. It shows the cu
 
 This utility cannot read credentials stored only in an operating-system keyring.
 
-## Run it
-
-From a checkout:
+### Run from a checkout
 
 ```bash
 cd codex-reset-credits
 ./check-reset-credits.sh
 ```
 
-Or install the command from a local checkout:
+### Install from a local checkout
 
 ```bash
 npm install --global .
@@ -78,6 +98,26 @@ codex-reset-credits --help
 ```
 
 Credit identifiers are hidden by default. Use `--show-ids` only when you genuinely need them. For issue reports and screenshots, keep the default.
+
+## How it works
+
+1. Reads the existing file-based Codex session from `auth.json`.
+2. Fetches the account's usage windows and available saved-reset credits from fixed ChatGPT HTTPS endpoints.
+3. Identifies the window closest to five hours and the window closest to seven days, then keeps only the usage and reset fields needed for the report.
+4. Estimates each window's pace and depletion time with a local-time profile that assumes heavier daytime use and lighter overnight use.
+5. Compares the two 95% target times, natural resets, the next credit's expiry, and the capacity that credit would recover.
+6. Renders a terminal or JSON report. It does not consume a reset credit or modify usage; only an authentication refresh may atomically update `auth.json`.
+
+The smart-plan outcomes are:
+
+| Outcome | Meaning |
+| --- | --- |
+| `USE NOW` | An active window is already at or above the 95% target. |
+| `NEAR LIMIT` | The five-hour or weekly window is projected to reach 95% before its natural reset. |
+| `BEFORE EXPIRY` | The next saved reset expires before the preferred target, so use it near expiry to retain its projected value. |
+| `WAIT` | Active windows should reset naturally before reaching the target. |
+| `SKIP / WAIT` | The expiring saved reset has no projected recovery value. |
+| `NO CREDIT` | No usable saved full reset is available. |
 
 ## Command reference
 
@@ -120,7 +160,9 @@ Do not attach an unreviewed API response to a public issue. Remove identifiers a
 - JSON output omits credit IDs unless `--show-ids` is explicitly set.
 - The repository contains synthetic fixtures only. No credential files, API responses, account IDs, usernames, home-directory paths, or real credit IDs should be committed.
 
-Treat `~/.codex/auth.json` like a password. Never copy it into this repository, a bug report, terminal transcript, or chat.
+Treat `~/.codex/auth.json` like a password. Never copy it into this repository, a bug report, terminal transcript, or chat. Confirm that it is readable only by your user—for example, `chmod 600 ~/.codex/auth.json`. The refresh flow preserves the existing mode; it does not repair an already permissive credential file.
+
+Keep `--show-ids` disabled for screenshots, logs, and untrusted `--input` files. `DEBUG=1` can print diagnostic stack traces containing local filesystem paths, so do not enable it in output you intend to share. See [SECURITY.md](SECURITY.md) for the complete operational guidance and private reporting process.
 
 ## Accuracy
 

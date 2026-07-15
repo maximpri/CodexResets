@@ -4,6 +4,10 @@ All notable changes to this project will be documented here. The format follows 
 
 ## [Unreleased]
 
+### Security
+
+- Documented credential-file permissions, identifier disclosure, debug-path exposure, repository hygiene, and the authentication/output security boundaries.
+
 ### Added
 
 - Weekly usage percentage, remaining capacity, and natural reset timing.
