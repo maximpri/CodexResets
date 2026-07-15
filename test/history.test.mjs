@@ -11,21 +11,35 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
+  defaultHistoryPath,
   deleteHistory,
   emptyHistory,
   HistoryError,
   HISTORY_SCHEMA_VERSION,
+  legacyHistoryPath,
   loadHistory,
   MAX_HISTORY_FILE_BYTES,
   MAX_HISTORY_SNAPSHOTS,
+  migrateHistoryFile,
   recordHistory,
   saveHistory,
   snapshotFromReport,
   summarizeHistory,
 } from '../src/history.mjs';
 
+test('uses the CodexResets-branded default history filename', () => {
+  assert.equal(
+    defaultHistoryPath({ CODEX_HOME: '/tmp/codex-home' }),
+    join('/tmp/codex-home', 'codexresets-history.json'),
+  );
+  assert.equal(
+    legacyHistoryPath({ CODEX_HOME: '/tmp/codex-home' }),
+    join('/tmp/codex-home', 'reset-credits-history.json'),
+  );
+});
+
 async function temporaryHistoryFile() {
-  const directory = await mkdtemp(join(tmpdir(), 'codex-reset-history-'));
+  const directory = await mkdtemp(join(tmpdir(), 'codexresets-history-'));
   return { directory, historyFile: join(directory, 'history.json') };
 }
 
@@ -50,6 +64,52 @@ function reportAt(checkedAt, fiveHourPercent = 20, weeklyPercent = 30) {
 test('a missing history file loads as an empty schema-v1 history', async () => {
   const { historyFile } = await temporaryHistoryFile();
   assert.deepEqual(await loadHistory(historyFile), emptyHistory());
+});
+
+test('migrates validated legacy history to the CodexResets filename', async () => {
+  const { directory, historyFile } = await temporaryHistoryFile();
+  const legacyFile = join(directory, 'reset-credits-history.json');
+  const now = new Date('2026-07-14T01:00:00Z');
+  await saveHistory(legacyFile, {
+    schema_version: HISTORY_SCHEMA_VERSION,
+    snapshots: [snapshotFromReport(reportAt('2026-07-14T00:00:00Z'))],
+  }, { now });
+
+  assert.equal(await migrateHistoryFile(legacyFile, historyFile, { now }), true);
+  assert.equal((await loadHistory(historyFile, { now })).snapshots.length, 1);
+  assert.equal((await stat(historyFile)).mode & 0o777, 0o600);
+  await assert.rejects(readFile(legacyFile), { code: 'ENOENT' });
+  assert.equal(await migrateHistoryFile(legacyFile, historyFile, { now }), false);
+});
+
+test('merges coexisting history and removes the legacy file', async () => {
+  const { directory, historyFile } = await temporaryHistoryFile();
+  const legacyFile = join(directory, 'reset-credits-history.json');
+  const now = new Date('2026-07-14T02:00:00Z');
+  await saveHistory(legacyFile, {
+    schema_version: HISTORY_SCHEMA_VERSION,
+    snapshots: [snapshotFromReport(reportAt('2026-07-14T00:00:00Z'))],
+  }, { now });
+  await saveHistory(historyFile, {
+    schema_version: HISTORY_SCHEMA_VERSION,
+    snapshots: [snapshotFromReport(reportAt('2026-07-14T01:00:00Z'))],
+  }, { now });
+
+  assert.equal(await migrateHistoryFile(legacyFile, historyFile, { now }), true);
+  assert.equal((await loadHistory(historyFile, { now })).snapshots.length, 2);
+  await assert.rejects(readFile(legacyFile), { code: 'ENOENT' });
+});
+
+test('refuses to migrate or delete malformed legacy history', async () => {
+  const { directory, historyFile } = await temporaryHistoryFile();
+  const legacyFile = join(directory, 'reset-credits-history.json');
+  await writeFile(legacyFile, '{"access_token":"private"', 'utf8');
+
+  await assert.rejects(migrateHistoryFile(legacyFile, historyFile), {
+    code: 'HISTORY_INVALID',
+  });
+  await assert.rejects(readFile(historyFile), { code: 'ENOENT' });
+  assert.match(await readFile(legacyFile, 'utf8'), /access_token/);
 });
 
 test('extracts only the allowed snapshot fields from a normalized report', () => {

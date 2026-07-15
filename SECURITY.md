@@ -9,6 +9,7 @@
 - Refreshed credentials are written to a uniquely named mode-`0600` temporary file in the credential file's directory and atomically renamed after a concurrent-update check. The destination is forced to mode `0600`.
 - Opt-in history uses a strict schema containing only check times, usage percentages, and reset times. It never serializes authentication, account, credit, recommendation, or raw-response fields.
 - History writes are atomic and mode `0600`; retention and size caps limit the file to 90 days, 2,000 snapshots, and 2 MiB. Deletion validates the history schema before unlinking.
+- Legacy history is migrated to the CodexResets filename only after the same strict schema validation.
 - Credential and history paths cannot be the same file.
 - Terminal text, including explicitly requested ID suffixes, has control and direction-changing characters neutralized before rendering.
 - CI runs a dependency-free, high-confidence secret scan over tracked and unignored files. Findings include only a filename, line number, and secret type—not the matched value.

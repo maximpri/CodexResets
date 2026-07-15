@@ -25,6 +25,8 @@ All notable changes to this project will be documented here. The format follows 
 
 ### Changed
 
+- Renamed the project to CodexResets, with `codexresets` as the primary package and command name. The previous command remains available as a compatibility alias.
+- Renamed the default local history file to `codexresets-history.json`, with validated one-time migration from the previous filename.
 - Custom credential-file paths receive separately scoped default history files.
 - Offline fixture rendering ignores ambient history and remains deterministic.
 

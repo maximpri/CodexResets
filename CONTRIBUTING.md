@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve Codex Reset Credits.
+Thanks for helping improve CodexResets.
 
 ## Before opening a pull request
 

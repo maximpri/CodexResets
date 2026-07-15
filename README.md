@@ -1,4 +1,4 @@
-# Codex Reset Credits
+# CodexResets
 
 A privacy-conscious terminal planner for Codex usage limits and saved full-reset credits.
 
@@ -26,7 +26,7 @@ It answers three practical questions:
 
 ```text
 ╭──────────────────────────────────────────────────────────────────────────────────────────────╮
-│ CODEX  /  RESET CREDITS                                                                      │
+│ CODEXRESETS                                                                                  │
 │ 3 available credits                                             checked 2026-07-13 23:25 UTC │
 │ UTC                                                                                          │
 ├──────────────────────────────────────────────────────────────────────────────────────────────┤
@@ -80,26 +80,28 @@ This utility cannot read credentials stored only in an operating-system keyring.
 ### Run from a checkout
 
 ```bash
-cd codex-reset-credits
-./check-reset-credits.sh
+cd CodexResets
+./codexresets.sh
 ```
 
 ### Install from a local checkout
 
 ```bash
 npm install --global .
-codex-reset-credits
+codexresets
 ```
 
 The system time zone is detected automatically. Override it with any valid IANA name:
 
 ```bash
-codex-reset-credits --timezone Europe/London
-codex-reset-credits --timezone UTC --format json
-codex-reset-credits --record
-codex-reset-credits --watch 15m --record --notify
-codex-reset-credits --help
+codexresets --timezone Europe/London
+codexresets --timezone UTC --format json
+codexresets --record
+codexresets --watch 15m --record --notify
+codexresets --help
 ```
+
+The earlier `codex-reset-credits` command and `check-reset-credits.sh` wrapper remain available as compatibility aliases.
 
 Credit identifiers are hidden by default. Use `--show-ids` only when you genuinely need them. For issue reports and screenshots, keep the default.
 
@@ -152,11 +154,11 @@ The command exits with status `0` after a successful report and a nonzero status
 History is opt-in. Add `--record` to a live report whenever you want to capture a snapshot:
 
 ```bash
-codex-reset-credits --record
-codex-reset-credits --history
+codexresets --record
+codexresets --history
 ```
 
-Once snapshots exist, ordinary live reports use matching observations automatically; `--record` is needed only to add the current observation. The default file is `~/.codex/reset-credits-history.json`, or the equivalent under `CODEX_HOME`. A custom `--auth-file` gets a separately scoped default history filename so different profiles do not silently share forecasts. `CODEX_HISTORY_FILE` and `--history-file` override that location.
+Once snapshots exist, ordinary live reports use matching observations automatically; `--record` is needed only to add the current observation. The default file is `~/.codex/codexresets-history.json`, or the equivalent under `CODEX_HOME`. A valid history file from the earlier project name is migrated once to the new filename. A custom `--auth-file` gets a separately scoped default history filename so different profiles do not silently share forecasts. `CODEX_HISTORY_FILE` and `--history-file` override that location.
 
 The on-disk schema is deliberately narrow. Each snapshot may contain only its check time and, for each available window, the used percentage and natural reset time. It never stores tokens, session IDs, account IDs, email addresses, credit IDs, titles, raw API responses, recommendations, or local paths. Writes are atomic, newly created directories use mode `0700`, the file is forced to mode `0600`, observations within the same 15-minute bucket are coalesced, and data is limited to 90 days, 2,000 snapshots, and 2 MiB.
 
@@ -167,8 +169,8 @@ Malformed or expanded history causes `--record`, `--history`, and `--forget-hist
 ## Watch for recommendation changes
 
 ```bash
-codex-reset-credits --watch 15m --record
-codex-reset-credits --watch 5m --record --notify
+codexresets --watch 15m --record
+codexresets --watch 5m --record --notify
 ```
 
 Watch mode performs one request at a time, prints the first report immediately, and then prints only when the recommended action, constraining window, timing-urgency bucket, or next saved-reset expiry changes. After that successful baseline, temporary network, rate-limit, and server failures use bounded exponential backoff; permanent authentication and input errors stop the command. Intervals must be between one minute and 24 hours.
@@ -180,7 +182,7 @@ Watch mode currently supports live table output only. `--notify` emits a termina
 `--input` bypasses authentication and network access. This is useful for development, snapshot generation, and sanitized bug reports:
 
 ```bash
-codex-reset-credits \
+codexresets \
   --input test/fixtures/credits.json \
   --now 2026-07-13T23:25:36Z \
   --timezone UTC \
@@ -262,7 +264,7 @@ Try `--ascii --color never`. For redirected output, color is disabled automatica
 npm test
 npm run check
 npm run security:secrets
-shellcheck check-reset-credits.sh
+shellcheck codexresets.sh check-reset-credits.sh
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for pull-request guidance and [SECURITY.md](SECURITY.md) for private vulnerability reporting.

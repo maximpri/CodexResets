@@ -762,7 +762,7 @@ export function renderTable(report, options = {}) {
   const separator = () => border(glyph.ml, glyph.mr);
 
   const output = [border(glyph.tl, glyph.tr)];
-  output.push(line(paint('CODEX  /  RESET CREDITS', 'bold')));
+  output.push(line(paint('CODEXRESETS', 'bold')));
   const count = report.credits.length;
   output.push(sides(
     paint(`${count} available ${plural(count, 'credit')}`, count ? 'green' : 'dim'),

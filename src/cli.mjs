@@ -12,7 +12,9 @@ import {
   defaultHistoryPath,
   emptyHistory,
   HistoryError,
+  legacyHistoryPath,
   loadHistory,
+  migrateHistoryFile,
   recordHistory,
   summarizeHistory,
 } from './history.mjs';
@@ -21,11 +23,11 @@ import { normalizeReport, renderJson, renderTable, validateTimeZone } from './re
 const packagePath = fileURLToPath(new URL('../package.json', import.meta.url));
 
 function usage() {
-  return `Codex Usage & Reset Planner
+  return `CodexResets
 
 Usage:
-  codex-reset-credits [options]
-  ./check-reset-credits.sh [options]
+  codexresets [options]
+  ./codexresets.sh [options]
 
 Options:
   --timezone <IANA name>   Display time zone (default: system time zone)
@@ -96,6 +98,7 @@ export function parseArguments(arguments_) {
     historyFile: process.env.CODEX_HISTORY_FILE
       ? resolve(process.env.CODEX_HISTORY_FILE)
       : defaultHistoryPath(),
+    legacyHistoryFile: process.env.CODEX_HISTORY_FILE ? null : legacyHistoryPath(),
     historyFileExplicit: Boolean(process.env.CODEX_HISTORY_FILE),
     record: false,
     showHistory: false,
@@ -142,6 +145,7 @@ export function parseArguments(arguments_) {
         break;
       case '--history-file':
         options.historyFile = resolve(requireValue(arguments_, index, argument));
+        options.legacyHistoryFile = null;
         options.historyFileExplicit = true;
         index += 1;
         break;
@@ -192,7 +196,8 @@ export function parseArguments(arguments_) {
   if (!Number.isFinite(options.now.getTime())) throw new SafeError('--now must be a valid timestamp.');
   if (!options.historyFileExplicit && resolve(options.authFile) !== resolve(defaultAuthFile)) {
     const scope = createHash('sha256').update(resolve(options.authFile)).digest('hex').slice(0, 12);
-    options.historyFile = join(codexHome, `reset-credits-history-${scope}.json`);
+    options.historyFile = join(codexHome, `codexresets-history-${scope}.json`);
+    options.legacyHistoryFile = join(codexHome, `reset-credits-history-${scope}.json`);
   }
   if (resolve(options.historyFile) === resolve(options.authFile)) {
     throw new SafeError('The history file must be different from the credential file.');
@@ -324,6 +329,23 @@ async function saveUsageSnapshot(path, report) {
   }
 }
 
+async function migrateUsageHistory(options, { fallback = false } = {}) {
+  if (!options.legacyHistoryFile) return;
+  try {
+    await migrateHistoryFile(options.legacyHistoryFile, options.historyFile);
+  } catch (error) {
+    if (error instanceof HistoryError && fallback) {
+      if (!historyWarningShown) {
+        process.stderr.write('Warning: legacy usage history migration was incomplete; continuing with available sanitized history.\n');
+        historyWarningShown = true;
+      }
+      return;
+    }
+    if (error instanceof HistoryError) throw new SafeError(error.message, { cause: error });
+    throw error;
+  }
+}
+
 async function removeUsageHistory(path) {
   try {
     return await deleteHistory(path);
@@ -340,6 +362,7 @@ function colorEnabled(mode) {
 }
 
 async function buildReport(options) {
+  if (!options.input) await migrateUsageHistory(options, { fallback: !options.record });
   const history = options.input
     ? emptyHistory()
     : await readUsageHistory(options.historyFile, { fallback: !options.record });
@@ -425,11 +448,13 @@ async function main() {
     return;
   }
   if (options.showHistory) {
+    await migrateUsageHistory(options);
     const history = await readUsageHistory(options.historyFile);
     process.stdout.write(historySummaryText(summarizeHistory(history)));
     return;
   }
   if (options.forgetHistory) {
+    await migrateUsageHistory(options);
     const deleted = await removeUsageHistory(options.historyFile);
     process.stdout.write(deleted ? 'Sanitized usage history deleted.\n' : 'No usage history was stored.\n');
     return;

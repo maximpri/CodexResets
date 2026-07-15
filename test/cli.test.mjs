@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -9,6 +9,12 @@ import { parseArguments, parseInterval, watchReports } from '../src/cli.mjs';
 
 const cli = new URL('../src/cli.mjs', import.meta.url);
 const fixture = new URL('fixtures/credits.json', import.meta.url);
+
+test('uses CodexResets as the public CLI name', () => {
+  const output = execFileSync(process.execPath, [cli.pathname, '--help'], { encoding: 'utf8' });
+  assert.match(output, /^CodexResets$/m);
+  assert.match(output, /^  codexresets \[options\]$/m);
+});
 
 test('renders an offline fixture without credentials', () => {
   const output = execFileSync(process.execPath, [
@@ -20,7 +26,7 @@ test('renders an offline fixture without credentials', () => {
     '--width', '80',
   ], { encoding: 'utf8' });
 
-  assert.match(output, /CODEX  \/  RESET CREDITS/);
+  assert.match(output, /CODEXRESETS/);
   assert.match(output, /WEEKLY USAGE/);
   assert.match(output, /5-HOUR USAGE/);
   assert.match(output, /20% used/);
@@ -32,8 +38,8 @@ test('renders an offline fixture without credentials', () => {
 test('runs through an npm-style executable symlink', {
   skip: process.platform === 'win32' ? 'symlink behavior differs on Windows' : false,
 }, () => {
-  const directory = mkdtempSync(join(tmpdir(), 'codex-reset-bin-'));
-  const executable = join(directory, 'codex-reset-credits');
+  const directory = mkdtempSync(join(tmpdir(), 'codexresets-bin-'));
+  const executable = join(directory, 'codexresets');
   symlinkSync(cli.pathname, executable);
 
   const output = execFileSync(executable, ['--version'], { encoding: 'utf8' });
@@ -94,9 +100,10 @@ test('validates safe watch intervals and incompatible options', () => {
 });
 
 test('offline fixtures ignore ambient recorded history', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'codex-reset-cli-'));
-  const historyFile = join(directory, 'history.json');
-  writeFileSync(historyFile, JSON.stringify({
+  const codexHome = mkdtempSync(join(tmpdir(), 'codexresets-cli-'));
+  const legacyFile = join(codexHome, 'reset-credits-history.json');
+  const historyFile = join(codexHome, 'codexresets-history.json');
+  writeFileSync(legacyFile, JSON.stringify({
     schema_version: 1,
     snapshots: [{
       checked_at: '2026-07-13T22:25:36.000Z',
@@ -109,17 +116,26 @@ test('offline fixtures ignore ambient recorded history', () => {
   const output = execFileSync(process.execPath, [
     cli.pathname,
     '--input', fixture.pathname,
-    '--history-file', historyFile,
     '--now', '2026-07-13T23:25:36Z',
     '--timezone', 'UTC',
     '--color', 'never',
-  ], { encoding: 'utf8' });
+  ], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      CODEX_HOME: codexHome,
+      CODEX_AUTH_FILE: '',
+      CODEX_HISTORY_FILE: '',
+    },
+  });
   assert.match(output, /20\.32 points\/day day\/night weighted/);
   assert.doesNotMatch(output, /recorded delta/);
+  assert.equal(existsSync(legacyFile), true);
+  assert.equal(existsSync(historyFile), false);
 });
 
 test('shows a sanitized history summary without authentication', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'codex-reset-cli-'));
+  const directory = mkdtempSync(join(tmpdir(), 'codexresets-cli-'));
   const historyFile = join(directory, 'history.json');
   writeFileSync(historyFile, JSON.stringify({
     schema_version: 1,
@@ -140,6 +156,66 @@ test('shows a sanitized history summary without authentication', () => {
   assert.match(output, /Snapshots: 1/);
   assert.match(output, /Weekly samples: 1/);
   assert.doesNotMatch(output, new RegExp(directory));
+});
+
+test('migrates the validated legacy default history without authentication', () => {
+  const codexHome = mkdtempSync(join(tmpdir(), 'codexresets-home-'));
+  const legacyFile = join(codexHome, 'reset-credits-history.json');
+  const historyFile = join(codexHome, 'codexresets-history.json');
+  writeFileSync(legacyFile, JSON.stringify({
+    schema_version: 1,
+    snapshots: [{
+      checked_at: new Date(Date.now() - 1_000).toISOString(),
+      weekly: {
+        used_percent: 25,
+        resets_at: new Date(Date.now() + 86_400_000).toISOString(),
+      },
+    }],
+  }));
+
+  const output = execFileSync(process.execPath, [cli.pathname, '--history'], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      CODEX_HOME: codexHome,
+      CODEX_AUTH_FILE: '',
+      CODEX_HISTORY_FILE: '',
+    },
+  });
+  assert.match(output, /Snapshots: 1/);
+  assert.equal(existsSync(legacyFile), false);
+  assert.equal(existsSync(historyFile), true);
+});
+
+test('forget history removes coexisting legacy and CodexResets files', () => {
+  const codexHome = mkdtempSync(join(tmpdir(), 'codexresets-home-'));
+  const legacyFile = join(codexHome, 'reset-credits-history.json');
+  const historyFile = join(codexHome, 'codexresets-history.json');
+  const history = JSON.stringify({ schema_version: 1, snapshots: [] });
+  writeFileSync(legacyFile, history);
+  writeFileSync(historyFile, history);
+  const environment = {
+    ...process.env,
+    CODEX_HOME: codexHome,
+    CODEX_AUTH_FILE: '',
+    CODEX_HISTORY_FILE: '',
+  };
+
+  const output = execFileSync(process.execPath, [cli.pathname, '--forget-history'], {
+    encoding: 'utf8',
+    env: environment,
+  });
+  assert.match(output, /history deleted/);
+  assert.equal(existsSync(legacyFile), false);
+  assert.equal(existsSync(historyFile), false);
+
+  const summary = execFileSync(process.execPath, [cli.pathname, '--history'], {
+    encoding: 'utf8',
+    env: environment,
+  });
+  assert.match(summary, /Snapshots: 0/);
+  assert.equal(existsSync(legacyFile), false);
+  assert.equal(existsSync(historyFile), false);
 });
 
 function watchReport(action, recommendedAt = null) {

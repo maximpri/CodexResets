@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+  access,
   chmod,
   mkdir,
   open,
@@ -17,7 +18,8 @@ export const MAX_HISTORY_FILE_BYTES = 2 * 1_024 * 1_024;
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const HISTORY_RETENTION_MS = HISTORY_RETENTION_DAYS * DAY_MS;
-const HISTORY_FILENAME = 'reset-credits-history.json';
+const HISTORY_FILENAME = 'codexresets-history.json';
+const LEGACY_HISTORY_FILENAME = 'reset-credits-history.json';
 const RESET_EPOCH_TOLERANCE_MS = 60 * 1_000;
 
 const ERROR_MESSAGES = {
@@ -47,6 +49,13 @@ export function defaultHistoryPath(env = process.env) {
     ? env.CODEX_HOME
     : join(homedir(), '.codex');
   return join(codexHome, HISTORY_FILENAME);
+}
+
+export function legacyHistoryPath(env = process.env) {
+  const codexHome = typeof env?.CODEX_HOME === 'string' && env.CODEX_HOME
+    ? env.CODEX_HOME
+    : join(homedir(), '.codex');
+  return join(codexHome, LEGACY_HISTORY_FILENAME);
 }
 
 export function emptyHistory() {
@@ -281,6 +290,41 @@ export async function recordHistory(
     },
     { now },
   );
+}
+
+export async function migrateHistoryFile(
+  source,
+  destination = defaultHistoryPath(),
+  { now = new Date() } = {},
+) {
+  if (!source || source === destination) return false;
+
+  let destinationExists = false;
+  try {
+    await access(destination);
+    destinationExists = true;
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw new HistoryError('HISTORY_READ_FAILED');
+  }
+
+  try {
+    await access(source);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return false;
+    throw new HistoryError('HISTORY_READ_FAILED');
+  }
+
+  const sourceHistory = await loadHistory(source, { now });
+  const destinationHistory = destinationExists
+    ? await loadHistory(destination, { now })
+    : emptyHistory();
+  await saveHistory(destination, {
+    schema_version: HISTORY_SCHEMA_VERSION,
+    // Destination entries win on a duplicate timestamp.
+    snapshots: [...sourceHistory.snapshots, ...destinationHistory.snapshots],
+  }, { now });
+  await deleteHistory(source);
+  return true;
 }
 
 function summarizeWindow(snapshots, name) {

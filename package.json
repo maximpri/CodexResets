@@ -1,9 +1,10 @@
 {
-  "name": "codex-reset-credits",
+  "name": "codexresets",
   "version": "1.0.0",
-  "description": "A privacy-conscious terminal planner for Codex five-hour and weekly usage limits.",
+  "description": "CodexResets is a privacy-conscious planner for Codex usage limits and saved resets.",
   "type": "module",
   "bin": {
+    "codexresets": "src/cli.mjs",
     "codex-reset-credits": "src/cli.mjs"
   },
   "scripts": {
@@ -24,6 +25,7 @@
   "files": [
     "src",
     "scripts",
+    "codexresets.sh",
     "check-reset-credits.sh",
     "README.md",
     "LICENSE",

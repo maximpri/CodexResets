@@ -68,7 +68,7 @@ test('secret scanner does not trust a generic synthetic-looking comment', () => 
 });
 
 test('API failures do not include raw response bodies', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'codex-reset-credits-'));
+  const directory = await mkdtemp(join(tmpdir(), 'codexresets-'));
   const authFile = join(directory, 'auth.json');
   await writeFile(authFile, JSON.stringify({ tokens: { access_token: 'synthetic-access-token' } }), {
     mode: 0o600,
@@ -89,7 +89,7 @@ test('API failures do not include raw response bodies', async () => {
 });
 
 test('non-JSON transient service failures remain retryable', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'codex-reset-credits-'));
+  const directory = await mkdtemp(join(tmpdir(), 'codexresets-'));
   const authFile = join(directory, 'auth.json');
   await writeFile(authFile, JSON.stringify({ tokens: { access_token: 'synthetic-access-token' } }), {
     mode: 0o600,
@@ -104,7 +104,7 @@ test('non-JSON transient service failures remain retryable', async () => {
 });
 
 test('uses the existing access token without an unnecessary refresh', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'codex-reset-credits-'));
+  const directory = await mkdtemp(join(tmpdir(), 'codexresets-'));
   const authFile = join(directory, 'auth.json');
   await writeFile(authFile, JSON.stringify({ tokens: {
     access_token: 'synthetic-current-token',
@@ -126,7 +126,7 @@ test('uses the existing access token without an unnecessary refresh', async () =
 });
 
 test('fetches credits and weekly usage with the same authenticated session', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'codex-reset-credits-'));
+  const directory = await mkdtemp(join(tmpdir(), 'codexresets-'));
   const authFile = join(directory, 'auth.json');
   await writeFile(authFile, JSON.stringify({ tokens: {
     access_token: 'synthetic-current-token',
@@ -153,7 +153,7 @@ test('fetches credits and weekly usage with the same authenticated session', asy
 });
 
 test('combined usage refreshes once when both account requests reject the session', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'codex-reset-credits-'));
+  const directory = await mkdtemp(join(tmpdir(), 'codexresets-'));
   const authFile = join(directory, 'auth.json');
   await writeFile(authFile, JSON.stringify({ tokens: {
     access_token: 'synthetic-expired-token',
@@ -185,7 +185,7 @@ test('combined usage refreshes once when both account requests reject the sessio
 });
 
 test('refreshes after a 401 and replaces permissive credentials with mode 0600', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'codex-reset-credits-'));
+  const directory = await mkdtemp(join(tmpdir(), 'codexresets-'));
   const authFile = join(directory, 'auth.json');
   await writeFile(authFile, JSON.stringify({ tokens: {
     access_token: 'synthetic-expired-token',
