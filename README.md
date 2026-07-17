@@ -1,18 +1,47 @@
 # CodexResets
 
-CodexResets shows your Codex usage limits, saved full-reset credits, and a suggested time to use the next credit.
+CodexResets is a read-only CLI and Codex plugin for checking exactly when your Codex usage windows reset. It leads with the five-hour and weekly limits, shows remaining capacity, and keeps natural usage resets separate from banked full-reset expiry dates and purchased credits.
 
 > [!IMPORTANT]
 > CodexResets is an independent community project, not an official OpenAI product. It uses undocumented ChatGPT endpoints that may change. Use `/usage` in the Codex TUI for the supported OpenAI experience.
 
 ## What it shows
 
-- A decision-first recommendation to use, keep, or skip the next saved reset
-- A chronological milestone list for the recommended action, natural resets, projected depletion, and the next credit expiry
-- Five-hour and weekly limit status with remaining capacity, reset timing, pace confidence, and clear `ON TRACK` or `AT RISK` labels
-- Saved full-reset credits ordered by expiry, with the next decision-relevant credit highlighted
+- The exact next five-hour and weekly limit reset dates in your selected time zone
+- Remaining capacity, reset countdowns, pace confidence, and clear `ON TRACK` or `AT RISK` labels
+- A decision-first recommendation to use, keep, or skip the next banked reset
+- A chronological milestone list for natural resets, projected depletion, recommendations, and banked-reset expiry
+- Banked full resets ordered by expiry, with the next decision-relevant reset highlighted
 
-CodexResets is read-only: it never consumes a reset credit.
+CodexResets never consumes a banked reset, purchases usage credits, or changes auto-reload settings.
+
+## Snapshots
+
+![CodexResets terminal report showing the weekly reset milestone](docs/images/codexresets-terminal.svg)
+
+The terminal snapshot puts `WEEKLY LIMIT RESETS` on its own milestone. The banked-reset expiry above it is a different event and does not change the weekly usage window.
+
+<details>
+<summary>Compare with Codex Analytics</summary>
+
+![Codex Analytics showing 26 percent weekly capacity remaining and a July 23 reset](docs/images/codex-analytics-weekly-reset.png)
+
+Codex Analytics shows **Jul 23, 2026 at 12:15 AM**. CodexResets shows **Thu 2026-07-23 00:15 EDT**. Those timestamps match: `00:15` is 12:15 AM in 24-hour notation.
+
+</details>
+
+## Understand the dates
+
+These values come from different account features and should not be compared with one another:
+
+| CodexResets value | Meaning | Compare it with |
+| --- | --- | --- |
+| `WEEKLY LIMIT RESETS` | The natural reset of the weekly plan-usage window | Codex Analytics → **Weekly usage limit** → **Resets** |
+| `5-HOUR LIMIT RESETS` | The natural reset of the rolling five-hour window | The corresponding five-hour usage display |
+| `NEXT SAVED RESET EXPIRES` | The deadline to redeem a banked full-reset coupon | The banked reset shown by Codex `/usage` |
+| `Credits remaining` in Codex Analytics | Purchased or auto-reload usage credits | The Analytics credit balance; CodexResets does not fetch it |
+
+When checking a weekly reset discrepancy, compare only the Analytics weekly-reset date with `weekly_usage.resets_at` in JSON or `WEEKLY LIMIT RESETS` in the table.
 
 ## Requirements
 
@@ -24,6 +53,8 @@ CodexResets is read-only: it never consumes a reset credit.
 Credentials stored only in an operating-system keyring cannot be read by this tool.
 
 ## Install
+
+### CLI
 
 Download and run the installer:
 
@@ -51,9 +82,27 @@ npm uninstall --global codexresets
 
 For a home-directory installation, add `--prefix "$HOME/.local"` to the uninstall command.
 
+### Codex plugin
+
+The local plugin exposes the `check-codex-resets` skill. Install it from the personal marketplace entry created for the plugin:
+
+```bash
+codex plugin add codexresets@personal
+```
+
+Start a new Codex thread after installation so the skill is discovered. Then ask naturally or invoke it explicitly:
+
+```text
+When does my Codex weekly limit reset?
+Use $check-codex-resets to show my weekly usage and reset date.
+Compare my weekly reset with Codex Analytics.
+```
+
+The plugin runs the same read-only checker and reports `weekly_usage.resets_at` first for weekly-reset questions. It does not substitute a banked-reset expiry date when weekly usage is unavailable.
+
 ## Use
 
-Run a report:
+Run the full terminal report:
 
 ```bash
 codexresets
@@ -67,6 +116,13 @@ The table is ordered for quick decisions:
 4. **Saved resets** lists available credits by expiry and marks the next one as `NEXT`.
 
 Times are shown in the selected local time zone. Relative durations such as `IN 3h 34m` make the next event easy to compare; use `--timezone` when planning in another location.
+
+For an exact weekly reset value suitable for scripts, request JSON and read `weekly_usage.resets_at`:
+
+```bash
+codexresets --format json \
+  | node -e 'let s=""; process.stdin.on("data", d => s += d).on("end", () => console.log(JSON.parse(s).weekly_usage?.resets_at ?? "unavailable"))'
+```
 
 Common examples:
 
@@ -125,6 +181,8 @@ See [SECURITY.md](SECURITY.md) for security details and private vulnerability re
 **Session refresh failed:** Run `codex login` again, then retry.
 
 **Borders or colors look wrong:** Run `codexresets --ascii --color never`.
+
+**Weekly reset appears not to match Analytics:** Compare `WEEKLY LIMIT RESETS` with the reset date inside the **Weekly usage limit** card. Do not compare it with `NEXT SAVED RESET EXPIRES` or `Credits remaining`. Remember that `00:15` and `12:15 AM` are the same time.
 
 **Service format changed:** The endpoints are undocumented. Open an issue with sanitized output only—never attach credentials or a raw account response.
 

@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="520" viewBox="0 0 1200 520" role="img" aria-labelledby="title desc">
+  <title id="title">CodexResets terminal report snapshot</title>
+  <desc id="desc">A dark terminal report showing weekly usage at 74 percent used and the weekly limit resetting Thursday July 23 2026 at 00:15 EDT.</desc>
+  <rect width="1200" height="520" rx="24" fill="#080a0d"/>
+  <rect x="28" y="28" width="1144" height="464" rx="14" fill="#11151b" stroke="#343b46" stroke-width="2"/>
+  <circle cx="58" cy="58" r="7" fill="#ff6b6b"/>
+  <circle cx="82" cy="58" r="7" fill="#ffd166"/>
+  <circle cx="106" cy="58" r="7" fill="#58d68d"/>
+
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="20">
+    <text x="56" y="112" fill="#f5f7fa" font-weight="700">CODEXRESETS</text>
+    <text x="235" y="112" fill="#8d97a6">/ RESET CONTROL</text>
+    <text x="1144" y="112" text-anchor="end" fill="#8d97a6">checked 2026-07-17 00:36 EDT</text>
+
+    <line x1="52" y1="138" x2="1148" y2="138" stroke="#343b46"/>
+    <text x="56" y="180" fill="#f5f7fa" font-weight="700">KEY MILESTONES</text>
+    <text x="1144" y="180" text-anchor="end" fill="#8d97a6">America/Toronto • chronological</text>
+
+    <text x="56" y="224" fill="#ff7b86" font-weight="700">!</text>
+    <text x="90" y="224" fill="#c7ced8">IN 10h 21m</text>
+    <text x="270" y="224" fill="#ff7b86" font-weight="700">WEEKLY CAPACITY RUNS OUT</text>
+    <text x="1144" y="224" text-anchor="end" fill="#a7b0bd">Fri 2026-07-17 10:57 EDT</text>
+
+    <text x="56" y="268" fill="#ffc857" font-weight="700">!</text>
+    <text x="90" y="268" fill="#c7ced8">IN 19h 50m</text>
+    <text x="270" y="268" fill="#ffc857" font-weight="700">NEXT SAVED RESET EXPIRES</text>
+    <text x="1144" y="268" text-anchor="end" fill="#a7b0bd">Fri 2026-07-17 20:26 EDT</text>
+
+    <rect x="46" y="292" width="1108" height="58" rx="8" fill="#11271d"/>
+    <text x="56" y="330" fill="#58d68d" font-weight="700">●</text>
+    <text x="90" y="330" fill="#e6f4eb">IN 5d 23h 39m</text>
+    <text x="300" y="330" fill="#58d68d" font-weight="700">WEEKLY LIMIT RESETS</text>
+    <text x="1144" y="330" text-anchor="end" fill="#d9e8df">Thu 2026-07-23 00:15 EDT</text>
+
+    <line x1="52" y1="376" x2="1148" y2="376" stroke="#343b46"/>
+    <text x="56" y="420" fill="#f5f7fa" font-weight="700">WEEKLY</text>
+    <text x="160" y="420" fill="#f5f7fa" font-weight="700">74% used</text>
+    <text x="284" y="420" fill="#8d97a6">•</text>
+    <text x="316" y="420" fill="#f5f7fa">26% left</text>
+    <text x="1144" y="420" text-anchor="end" fill="#f5f7fa">reset in 5d 23h 39m</text>
+
+    <text x="56" y="462" fill="#8d97a6">Weekly reset timing is separate from banked-reset expiry and purchased credits.</text>
+  </g>
+</svg>
