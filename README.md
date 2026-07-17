@@ -17,7 +17,7 @@ CodexResets never consumes a banked reset, purchases usage credits, or changes a
 
 ## Snapshots
 
-![CodexResets terminal report showing the weekly reset milestone](docs/images/codexresets-terminal.svg)
+![CodexResets terminal report showing the weekly reset milestone](docs/images/codexresets-terminal.png)
 
 The terminal snapshot puts `WEEKLY LIMIT RESETS` on its own milestone. The banked-reset expiry above it is a different event and does not change the weekly usage window.
 
