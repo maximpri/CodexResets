@@ -104,11 +104,52 @@ function trackedFiles(root) {
     'git',
     ['-C', root, 'ls-files', '--cached', '--others', '--exclude-standard', '-z'],
     {
-    encoding: 'buffer',
-    stdio: ['ignore', 'pipe', 'ignore'],
+      encoding: 'buffer',
+      stdio: ['ignore', 'pipe', 'ignore'],
     },
   );
   return output.toString('utf8').split('\0').filter(Boolean);
+}
+
+function reachableGitBlobs(root) {
+  const objects = execFileSync(
+    'git',
+    ['-C', root, 'rev-list', '--objects', '--all'],
+    {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      maxBuffer: 64 * 1024 * 1024,
+    },
+  );
+
+  const paths = new Map();
+  for (const line of objects.split('\n')) {
+    if (!line) continue;
+    const separator = line.indexOf(' ');
+    const object = separator === -1 ? line : line.slice(0, separator);
+    const file = separator === -1 ? '' : line.slice(separator + 1);
+    if (!paths.has(object) || (!paths.get(object) && file)) paths.set(object, file);
+  }
+
+  const objectIds = [...paths.keys()];
+  if (objectIds.length === 0) return [];
+  const metadata = execFileSync(
+    'git',
+    ['-C', root, 'cat-file', '--batch-check=%(objectname) %(objecttype) %(objectsize)'],
+    {
+      input: `${objectIds.join('\n')}\n`,
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'ignore'],
+      maxBuffer: 64 * 1024 * 1024,
+    },
+  );
+
+  return metadata.split('\n').flatMap((line) => {
+    if (!line) return [];
+    const [object, type, sizeText] = line.split(' ');
+    if (type !== 'blob') return [];
+    return [{ object, file: paths.get(object) || '(unknown path)', size: Number(sizeText) }];
+  });
 }
 
 export async function scanTrackedFiles(root) {
@@ -137,10 +178,42 @@ export async function scanTrackedFiles(root) {
   return findings;
 }
 
+export function scanGitHistory(root) {
+  const findings = [];
+
+  for (const { object, file, size } of reachableGitBlobs(root)) {
+    let contents;
+    try {
+      contents = execFileSync(
+        'git',
+        ['-C', root, 'cat-file', 'blob', object],
+        {
+          encoding: 'buffer',
+          stdio: ['ignore', 'pipe', 'ignore'],
+          maxBuffer: Math.max(size + 1024, 1024 * 1024),
+        },
+      );
+    } catch {
+      throw new Error(`Could not inspect Git object ${object}.`);
+    }
+
+    if (contents.includes(0)) continue;
+    for (const finding of scanText(contents.toString('utf8'))) {
+      findings.push({ file, object: object.slice(0, 12), ...finding });
+    }
+  }
+
+  return findings;
+}
+
 async function main() {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-  const findings = await scanTrackedFiles(root);
-  for (const { file, line, type } of findings) process.stderr.write(`${file}:${line}:${type}\n`);
+  const historyMode = process.argv.slice(2).includes('--history');
+  const findings = historyMode ? scanGitHistory(root) : await scanTrackedFiles(root);
+  for (const { file, line, type, object } of findings) {
+    const source = object ? `:git-${object}` : '';
+    process.stderr.write(`${file}:${line}:${type}${source}\n`);
+  }
   if (findings.length > 0) process.exitCode = 1;
 }
 

@@ -7,7 +7,8 @@ All notable changes to this project will be documented here. The format follows 
 ### Security
 
 - Credential refreshes now replace permissive file modes with `0600` while retaining atomic writes and concurrent-update protection.
-- Added a dependency-free CI secret scan that checks tracked and unignored files without printing matched values.
+- Added a dependency-free CI secret scan that checks tracked and unignored files plus every reachable Git revision without printing matched values.
+- Expanded repository ignores for common package-manager credentials, service-account files, private keys, and key stores.
 - Sanitized explicitly requested terminal ID suffixes and common local paths in debug stacks.
 - Added strict history schema validation, atomic mode-`0600` writes, bounded retention, and validated deletion.
 

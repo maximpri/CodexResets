@@ -16,7 +16,7 @@
 - Credential and history paths cannot be the same file.
 - Terminal text, including explicitly requested ID suffixes, has control and direction-changing characters neutralized before rendering.
 - The quick installer fetches only the selected CodexResets tarball from GitHub over HTTPS, invokes npm with lifecycle scripts disabled, and never requests `sudo` or edits shell profiles.
-- CI runs a dependency-free, high-confidence secret scan over tracked and unignored files. Findings include only a filename, line number, and secret type—not the matched value.
+- CI runs a dependency-free, high-confidence secret scan over tracked and unignored files and every reachable Git revision. Findings include only a filename, line number, secret type, and abbreviated Git object ID—not the matched value.
 - Repository fixtures and authentication tests use visibly synthetic identifiers and token values.
 
 These controls reduce accidental disclosure but do not make saved credentials safe to share.
@@ -35,7 +35,7 @@ These controls reduce accidental disclosure but do not make saved credentials sa
 
 ## Repository hygiene
 
-The `.gitignore` excludes common credential, environment, log, private-data, history, and saved-response filenames. Ignore rules and automated scanning are safety nets, not proof that a repository is clean: the scanner does not inspect ignored files or prior Git history, so inspect staged changes and scan history before publishing. Pull requests must use synthetic fixtures, run `npm run security:secrets`, and pass the privacy checklist in the pull-request template.
+The `.gitignore` excludes common credential, environment, log, private-data, history, and saved-response filenames. Ignore rules and automated scanning are safety nets, not proof that a repository is clean: the scanner does not inspect ignored files, so inspect staged changes before publishing. Pull requests must use synthetic fixtures, run `npm run security:secrets`, and pass the privacy checklist in the pull-request template. The history scan covers every revision available in the local clone; CI uses a full clone.
 
 ## Reporting a vulnerability
 

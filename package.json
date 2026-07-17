@@ -9,7 +9,7 @@
   },
   "scripts": {
     "check": "node --check src/cli.mjs && node --check src/auth.mjs && node --check src/history.mjs && node --check src/redemption.mjs && node --check src/report.mjs && node --check scripts/scan-secrets.mjs && bash -n install.sh codexresets.sh check-reset-credits.sh",
-    "security:secrets": "node scripts/scan-secrets.mjs",
+    "security:secrets": "node scripts/scan-secrets.mjs && node scripts/scan-secrets.mjs --history",
     "test": "node --test"
   },
   "engines": {

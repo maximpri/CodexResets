@@ -220,8 +220,18 @@ See [SECURITY.md](SECURITY.md) for security details and private vulnerability re
 npm test
 npm run check
 npm run security:secrets
-shellcheck install.sh codexresets.sh
+shellcheck install.sh codexresets.sh check-reset-credits.sh
 ```
+
+`npm run security:secrets` checks tracked files, nonignored untracked files, and every
+reachable Git revision without printing matched values. History coverage is limited
+to revisions available in the clone; CI fetches full history before scanning. Ignored
+files are intentionally excluded, so never force-add local credentials, saved API
+responses, usage history, private keys, or package-manager authentication files.
+
+Before publishing a package, use `npm pack --dry-run` to review its exact contents.
+The npm allowlist in `package.json` excludes tests, screenshots, local data, and CI
+configuration.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidance and [CHANGELOG.md](CHANGELOG.md) for release notes.
 

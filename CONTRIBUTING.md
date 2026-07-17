@@ -12,7 +12,7 @@ Thanks for helping improve CodexResets.
 
 History fixtures must follow the strict schema documented in the README and use synthetic timestamps and percentages only. Never copy a live history file into the repository.
 
-If forecast semantics change, update the methodology documentation and JSON tests together; increment `methodology_version` when downstream interpretation changes. The secret scanner checks tracked and nonignored untracked files, but not ignored files or previous Git commits.
+If forecast semantics change, update the methodology documentation and JSON tests together; increment `methodology_version` when downstream interpretation changes. The secret scanner checks tracked and nonignored untracked files plus every Git revision available in the local clone, but not ignored files. CI uses a full clone for complete reachable-history coverage.
 
 The direct ChatGPT usage and credits fetch endpoints are undocumented. The Codex app-server redemption method is documented, but app-server remains experimental. Treat observed response fields as untrusted input, preserve graceful fallbacks, and avoid claims about fields whose semantics are not publicly documented.
 

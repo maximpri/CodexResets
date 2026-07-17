@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { chmod, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,7 +10,7 @@ import {
   fetchCredits,
   SafeError,
 } from '../src/auth.mjs';
-import { scanText } from '../scripts/scan-secrets.mjs';
+import { scanGitHistory, scanText } from '../scripts/scan-secrets.mjs';
 
 function jwt(payload) {
   return `header.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.signature`;
@@ -65,6 +66,26 @@ test('secret scanner does not trust a generic synthetic-looking comment', () => 
   assert.deepEqual(scanText(`${token} // example integration`), [
     { line: 1, type: 'github-token' },
   ]);
+});
+
+test('secret scanner detects a credential deleted from Git history', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'codexresets-history-scan-'));
+  const token = ['ghp_', 'A'.repeat(36)].join('');
+  const fixture = join(directory, 'temporary-credential.txt');
+  execFileSync('git', ['-C', directory, 'init', '--quiet']);
+  execFileSync('git', ['-C', directory, 'config', 'user.name', 'Synthetic Test']);
+  execFileSync('git', ['-C', directory, 'config', 'user.email', 'test@example.invalid']);
+  await writeFile(fixture, `${token}\n`, 'utf8');
+  execFileSync('git', ['-C', directory, 'add', 'temporary-credential.txt']);
+  execFileSync('git', ['-C', directory, 'commit', '--quiet', '-m', 'add fixture']);
+  await writeFile(fixture, 'sanitized\n', 'utf8');
+  execFileSync('git', ['-C', directory, 'commit', '--quiet', '-am', 'sanitize fixture']);
+
+  const findings = scanGitHistory(directory);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].file, 'temporary-credential.txt');
+  assert.equal(findings[0].type, 'github-token');
+  assert.ok(!JSON.stringify(findings).includes(token));
 });
 
 test('API failures do not include raw response bodies', async () => {
