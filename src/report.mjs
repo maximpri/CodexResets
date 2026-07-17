@@ -23,7 +23,6 @@ const ANSI = {
 
 const stripAnsi = (value) => String(value).replace(/\u001b\[[0-9;]*m/g, '');
 const visibleLength = (value) => [...stripAnsi(value)].length;
-const plural = (count, singular, multiple = `${singular}s`) => count === 1 ? singular : multiple;
 const clamp = (value, minimum, maximum) => Math.min(maximum, Math.max(minimum, value));
 
 function finiteNumber(value) {
@@ -718,8 +717,14 @@ export function renderTable(report, options = {}) {
   const width = Math.min(120, Math.max(68, Number.isFinite(requestedWidth) ? requestedWidth : 96));
   const inner = width - 4;
   const glyph = ascii
-    ? { tl: '+', tr: '+', bl: '+', br: '+', h: '-', v: '|', ml: '+', mr: '+' }
-    : { tl: '╭', tr: '╮', bl: '╰', br: '╯', h: '─', v: '│', ml: '├', mr: '┤' };
+    ? {
+      tl: '+', tr: '+', bl: '+', br: '+', h: '-', v: '|', ml: '+', mr: '+',
+      dot: 'o', focus: '>', risk: '!', bullet: '*',
+    }
+    : {
+      tl: '╭', tr: '╮', bl: '╰', br: '╯', h: '─', v: '│', ml: '├', mr: '┤',
+      dot: '●', focus: '◆', risk: '!', bullet: '•',
+    };
 
   const paint = (value, ...styles) => color
     ? `${styles.map((style) => ANSI[style]).join('')}${value}${ANSI.reset}`
@@ -745,6 +750,14 @@ export function renderTable(report, options = {}) {
     NO_SAVED_RESET: 'NO CREDIT',
     CHECK_USAGE: 'CHECK USAGE',
   };
+  const actionHeadline = {
+    USE_NOW: 'USE A SAVED RESET NOW',
+    WAIT_FOR_WEEKLY_RESET: 'KEEP YOUR SAVED RESET',
+    WAIT_FOR_FIVE_HOUR_RESET: 'KEEP YOUR SAVED RESET',
+    SKIP_EXPIRING_RESET: 'LET THIS SAVED RESET EXPIRE',
+    NO_SAVED_RESET: 'NO SAVED RESET TO USE',
+    CHECK_USAGE: 'CHECK USAGE BEFORE DECIDING',
+  };
   const numberLabel = (value, decimals = 1) => Number.isInteger(value)
     ? String(value)
     : value.toFixed(decimals).replace(/\.0$/, '');
@@ -753,71 +766,37 @@ export function renderTable(report, options = {}) {
     const padding = Math.max(0, inner - visibleLength(content));
     return `${glyph.v} ${content}${' '.repeat(padding)} ${glyph.v}`;
   };
-  const textLine = (content = '') => line(truncate(terminalSafe(content), inner));
   const sides = (left, right) => {
     const gap = Math.max(1, inner - visibleLength(left) - visibleLength(right));
     return line(`${left}${' '.repeat(gap)}${right}`);
+  };
+  const wrappedLines = (value, prefix = '', ...styles) => {
+    const words = terminalSafe(value).split(' ').filter(Boolean);
+    const maximum = Math.max(1, inner - visibleLength(prefix));
+    const rows = [];
+    let current = '';
+    for (const word of words) {
+      if (!current) {
+        current = truncate(word, maximum);
+      } else if (visibleLength(`${current} ${word}`) <= maximum) {
+        current = `${current} ${word}`;
+      } else {
+        rows.push(current);
+        current = truncate(word, maximum);
+      }
+    }
+    if (current || !rows.length) rows.push(current);
+    return rows.map((row) => line(paint(`${prefix}${row}`, ...styles)));
   };
   const border = (left, right) => `${left}${glyph.h.repeat(width - 2)}${right}`;
   const separator = () => border(glyph.ml, glyph.mr);
 
   const output = [border(glyph.tl, glyph.tr)];
-  output.push(line(paint('CODEXRESETS', 'bold')));
   const count = report.credits.length;
   output.push(sides(
-    paint(`${count} available ${plural(count, 'credit')}`, count ? 'green' : 'dim'),
+    `${paint('CODEXRESETS', 'bold')} ${paint('/ RESET CONTROL', 'dim')}`,
     paint(`checked ${formatDate(report.checkedAt, report.timeZone, { seconds: false, weekday: false })}`, 'dim'),
   ));
-  output.push(line(paint(report.timeZone, 'dim')));
-
-  const appendUsageSection = (usage, heading, paceUnit) => {
-    output.push(separator());
-    output.push(line(paint(heading, 'bold')));
-    if (!usage) {
-      output.push(line(`${heading[0]}${heading.slice(1).toLowerCase()} data is unavailable in this response.`));
-      return;
-    }
-    output.push(sides(
-      `${paint(`${numberLabel(usage.usedPercent)}% used`, 'bold')}  ·  ${numberLabel(usage.remainingPercent)}% left`,
-      `resets in ${paint(formatDuration(usage.remainingMs), 'bold')}`,
-    ));
-    output.push(line(paint(`    ${formatDate(usage.resetsAt, report.timeZone)}`, 'dim')));
-    if (usage.averagePercentPerDay === null) {
-      output.push(sides('Pace  collecting early-window data', paint('LOW confidence', 'dim')));
-    } else {
-      const pace = paceUnit === 'hour'
-        ? usage.averagePercentPerHour
-        : usage.averagePercentPerDay;
-      const paceBasis = usage.paceSource === 'recorded_history'
-        ? 'recorded delta'
-        : 'day/night weighted';
-      output.push(sides(
-        `Pace  ${paint(`${numberLabel(pace, 2)} points/${paceUnit}`, 'bold')} ${paceBasis}`,
-        paint(`${usage.confidence} confidence`, usage.confidence === 'HIGH' ? 'green' : 'dim'),
-      ));
-    }
-
-    if (!usage.estimatedExhaustionAt && usage.averagePercentPerDay === null) {
-      output.push(line(paint('Estimated empty  not enough usage to project', 'dim')));
-    } else if (!usage.estimatedExhaustionAt) {
-      output.push(line(`Estimated empty  after ${usage.label.toLowerCase()} reset`));
-    } else if (usage.exhaustsBeforeReset) {
-      output.push(sides(
-        paint('Estimated empty', 'bold'),
-        `in ${paint(formatDuration(usage.estimatedExhaustionAt - report.checkedAt), 'bold', 'yellow')}`,
-      ));
-      output.push(line(paint(`    ${formatDate(usage.estimatedExhaustionAt, report.timeZone)}`, 'dim')));
-    } else {
-      output.push(sides(
-        `Estimated empty  after ${usage.label.toLowerCase()} reset`,
-        paint(formatDate(usage.estimatedExhaustionAt, report.timeZone, { seconds: false, weekday: false }), 'dim'),
-      ));
-    }
-  };
-
-  appendUsageSection(report.fiveHourUsage, '5-HOUR USAGE', 'hour');
-  appendUsageSection(report.weeklyUsage, 'WEEKLY USAGE', 'day');
-
   output.push(separator());
   const recommendation = report.recommendation;
   const recommendationBadge = paint(
@@ -825,80 +804,206 @@ export function renderTable(report, options = {}) {
     'bold',
     actionStyle[recommendation.action] ?? 'dim',
   );
-  output.push(sides(paint('SMART RESET PLAN', 'bold'), recommendationBadge));
-  output.push(textLine(recommendation.reason));
+  const recommendationRemaining = recommendation.recommendedAt
+    ? recommendation.recommendedAt - report.checkedAt
+    : null;
+  const dynamicHeadline = ['USE_NEAR_LIMIT', 'USE_BEFORE_EXPIRY'].includes(recommendation.action)
+    ? recommendationRemaining <= 0
+      ? 'USE A SAVED RESET NOW'
+      : `USE A SAVED RESET IN ${formatDuration(recommendationRemaining)}`
+    : actionHeadline[recommendation.action] ?? recommendation.action;
+  output.push(sides(paint('DECISION', 'bold'), recommendationBadge));
+  output.push(line(paint(dynamicHeadline, 'bold', actionStyle[recommendation.action] ?? 'dim')));
+  output.push(...wrappedLines(recommendation.reason, `${glyph.bullet} `));
   if (recommendation.recommendedAt) {
-    const recommendationRemaining = recommendation.recommendedAt - report.checkedAt;
     output.push(sides(
-      '    Recommended time',
-      recommendationRemaining <= 0 ? paint('now', 'bold', 'red') : `in ${paint(formatDuration(recommendationRemaining), 'bold')}`,
+      paint('DO THIS', 'dim'),
+      paint(formatDate(recommendation.recommendedAt, report.timeZone, { seconds: false }), 'bold'),
     ));
-    output.push(line(paint(`    ${formatDate(recommendation.recommendedAt, report.timeZone)}`, 'dim')));
   }
   const resetValues = recommendation.estimatedResetValues;
-  if (resetValues.fiveHourPercent !== null || resetValues.weeklyPercent !== null) {
-    if (resetValues.fiveHourPercent !== null) {
-      output.push(line(
-        `    5-hour reset value  ${paint(`${numberLabel(resetValues.fiveHourPercent)} points`, 'bold')}`,
-      ));
-    }
-    if (resetValues.weeklyPercent !== null) {
-      output.push(line(
-        `    Weekly reset value  ${paint(`${numberLabel(resetValues.weeklyPercent)} points`, 'bold')}`,
-      ));
-    }
+  const valueParts = [
+    resetValues.fiveHourPercent === null
+      ? null
+      : `5-hour ${numberLabel(resetValues.fiveHourPercent)} points`,
+    resetValues.weeklyPercent === null
+      ? null
+      : `weekly ${numberLabel(resetValues.weeklyPercent)} points`,
+  ].filter(Boolean);
+  if (valueParts.length) {
+    output.push(sides(
+      paint('EXPECTED RESET VALUE', 'dim'),
+      paint(valueParts.join(` ${glyph.bullet} `), 'bold'),
+    ));
   } else if (recommendation.estimatedResetValuePercent !== null) {
-    output.push(line(
-      `    Estimated reset value  ${paint(`${numberLabel(recommendation.estimatedResetValuePercent)} points`, 'bold')}`,
+    output.push(sides(
+      paint('EXPECTED RESET VALUE', 'dim'),
+      paint(`${numberLabel(recommendation.estimatedResetValuePercent)} points`, 'bold'),
     ));
   } else if (recommendation.projectedUsagePercent !== null) {
     const projectionLabel = recommendation.action === 'WAIT_FOR_WEEKLY_RESET'
-      ? 'Projected at weekly reset'
+      ? 'AT WEEKLY RESET'
       : recommendation.action === 'WAIT_FOR_FIVE_HOUR_RESET'
-        ? 'Projected at 5-hour reset'
+        ? 'AT 5-HOUR RESET'
       : recommendation.action === 'SKIP_EXPIRING_RESET'
-        ? 'Projected at credit expiry'
-        : 'Projected usage then';
-    output.push(line(
-      `    ${projectionLabel}  ${paint(`${numberLabel(recommendation.projectedUsagePercent)}%`, 'bold')}`,
+        ? 'AT CREDIT EXPIRY'
+        : 'PROJECTED USAGE';
+    output.push(sides(
+      paint(projectionLabel, 'dim'),
+      paint(`${numberLabel(recommendation.projectedUsagePercent)}% used`, 'bold'),
     ));
   }
   if (report.nextSavedReset) {
     const expiry = report.nextSavedReset.expiresAt;
     output.push(sides(
-      '    Next saved full reset',
-      expiry ? `expires in ${paint(formatDuration(report.nextSavedReset.remainingMs), 'bold')}` : paint('expiry unknown', 'dim'),
+      paint('DECISION DEADLINE', 'dim'),
+      expiry ? `credit expires in ${paint(formatDuration(report.nextSavedReset.remainingMs), 'bold')}` : paint('credit expiry unknown', 'dim'),
     ));
-    if (expiry) output.push(line(paint(`    ${formatDate(expiry, report.timeZone)}`, 'dim')));
   } else {
-    output.push(line(paint('    No unexpired full reset is saved.', 'dim')));
+    output.push(line(paint('No unexpired full reset is saved.', 'dim')));
+  }
+
+  const milestones = [];
+  const addMilestone = (at, label, tone = 'dim', kind = 'standard') => {
+    if (!at || !Number.isFinite(at.getTime()) || at < report.checkedAt) return;
+    milestones.push({ at, label, tone, kind });
+  };
+  addMilestone(report.checkedAt, 'NOW / REPORT CHECKED', 'dim', 'now');
+  if (recommendation.recommendedAt) {
+    addMilestone(
+      recommendation.recommendedAt,
+      recommendation.action === 'USE_NOW' ? 'USE SAVED RESET NOW' : 'USE SAVED RESET',
+      actionStyle[recommendation.action] ?? 'yellow',
+      'focus',
+    );
+  }
+  if (report.fiveHourUsage?.exhaustsBeforeReset) {
+    addMilestone(report.fiveHourUsage.estimatedExhaustionAt, '5-HOUR CAPACITY RUNS OUT', 'red', 'risk');
+  }
+  if (report.weeklyUsage?.exhaustsBeforeReset) {
+    addMilestone(report.weeklyUsage.estimatedExhaustionAt, 'WEEKLY CAPACITY RUNS OUT', 'red', 'risk');
+  }
+  if (report.nextSavedReset?.expiresAt) {
+    addMilestone(
+      report.nextSavedReset.expiresAt,
+      'NEXT SAVED RESET EXPIRES',
+      urgencyStyle[report.nextSavedReset.urgency] ?? 'dim',
+      'risk',
+    );
+  }
+  addMilestone(report.fiveHourUsage?.resetsAt, '5-HOUR LIMIT RESETS', 'green');
+  addMilestone(report.weeklyUsage?.resetsAt, 'WEEKLY LIMIT RESETS', 'green');
+  milestones.sort((a, b) => a.at - b.at || (a.kind === 'focus' ? -1 : 1));
+  const visibleMilestones = milestones.filter((milestone) => !(
+    milestone.kind === 'now'
+      && milestones.some((candidate) => (
+        candidate.kind === 'focus' && candidate.at.getTime() === milestone.at.getTime()
+      ))
+  ));
+
+  output.push(separator());
+  const milestoneContext = `${report.timeZone} ${glyph.bullet} chronological`;
+  const milestoneContextWidth = Math.max(8, inner - visibleLength('KEY MILESTONES') - 1);
+  output.push(sides(
+    paint('KEY MILESTONES', 'bold'),
+    paint(truncate(milestoneContext, milestoneContextWidth), 'dim'),
+  ));
+  for (const milestone of visibleMilestones) {
+    const relative = milestone.at <= report.checkedAt
+      ? 'NOW'
+      : `IN ${formatDuration(milestone.at - report.checkedAt)}`;
+    const marker = milestone.kind === 'focus'
+      ? glyph.focus
+      : milestone.kind === 'risk'
+        ? glyph.risk
+        : glyph.dot;
+    const leftPrefix = `${paint(marker, 'bold', milestone.tone)} ${fit(relative, 13)} `;
+    const absolute = paint(
+      formatDate(milestone.at, report.timeZone, { seconds: false }),
+      'dim',
+    );
+    const maximumLabel = Math.max(8, inner - visibleLength(leftPrefix) - visibleLength(absolute) - 1);
+    output.push(sides(
+      `${leftPrefix}${paint(truncate(milestone.label, maximumLabel), 'bold', milestone.tone)}`,
+      absolute,
+    ));
+  }
+
+  output.push(separator());
+  output.push(line(paint('LIMIT STATUS', 'bold')));
+  const appendUsage = (usage, paceUnit) => {
+    if (!usage) return;
+    const state = usage.exhaustsBeforeReset
+      ? paint('AT RISK', 'bold', 'red')
+      : usage.averagePercentPerDay === null
+        ? paint('LEARNING', 'bold', 'dim')
+        : paint('ON TRACK', 'bold', 'green');
+    output.push(sides(
+      `${paint(usage.label.toUpperCase().padEnd(8), 'bold')} ${paint(`${numberLabel(usage.usedPercent)}% used`, 'bold')} ${glyph.bullet} ${numberLabel(usage.remainingPercent)}% left`,
+      `reset in ${paint(formatDuration(usage.remainingMs), 'bold')}  ${state}`,
+    ));
+    if (usage.averagePercentPerDay === null) {
+      output.push(line(paint('          Pace collecting early-window data · LOW confidence', 'dim')));
+      return;
+    }
+    const pace = paceUnit === 'hour' ? usage.averagePercentPerHour : usage.averagePercentPerDay;
+    const paceBasis = usage.paceSource === 'recorded_history'
+      ? 'recorded delta'
+      : 'day/night weighted';
+    const outcome = usage.exhaustsBeforeReset
+      ? `empty in ${formatDuration(usage.estimatedExhaustionAt - report.checkedAt)}`
+      : 'lasts through reset';
+    output.push(...wrappedLines(
+      `Pace ${numberLabel(pace, 2)} points/${paceUnit} ${glyph.bullet} ${paceBasis} ${glyph.bullet} ${usage.confidence} confidence ${glyph.bullet} ${outcome}`,
+      '  ',
+      'dim',
+    ));
+  };
+  if (!report.fiveHourUsage && !report.weeklyUsage) {
+    output.push(line(paint('Usage data is unavailable in this response.', 'dim')));
+  } else {
+    appendUsage(report.fiveHourUsage, 'hour');
+    appendUsage(report.weeklyUsage, 'day');
   }
 
   if (count === 0) {
     output.push(separator());
+    output.push(sides(paint('SAVED RESETS', 'bold'), paint('NONE AVAILABLE', 'dim')));
     output.push(line('No reset credits are currently available.'));
   } else {
+    output.push(separator());
+    output.push(sides(
+      paint('SAVED RESETS', 'bold'),
+      paint(`${count} AVAILABLE`, 'bold', 'green'),
+    ));
     for (const [index, credit] of report.credits.entries()) {
-      output.push(separator());
       const number = String(index + 1).padStart(2, '0');
       const badge = paint(credit.urgency, 'bold', urgencyStyle[credit.urgency]);
-      const titleWidth = Math.max(8, inner - 8 - visibleLength(credit.urgency));
+      const creditRight = credit.expiresAt
+        ? `expires in ${paint(formatDuration(credit.remainingMs), 'bold')}  ${badge}`
+        : `${paint('expiry unknown', 'dim')}  ${badge}`;
+      const creditPrefix = `${paint(number, 'dim')}  `;
+      const nextLabel = index === 0 ? `  ${paint('NEXT', 'yellow')}` : '';
+      const titleWidth = Math.max(
+        4,
+        inner
+          - visibleLength(creditPrefix)
+          - visibleLength(nextLabel)
+          - visibleLength(creditRight)
+          - 1,
+      );
       output.push(sides(
-        `${paint(number, 'dim')}  ${paint(fit(terminalSafe(credit.title) || 'Reset credit', titleWidth), 'bold')}`,
-        badge,
+        `${creditPrefix}${paint(truncate(terminalSafe(credit.title) || 'Reset credit', titleWidth), 'bold')}${nextLabel}`,
+        creditRight,
       ));
 
       if (credit.expiresAt) {
-        const local = formatDate(credit.expiresAt, report.timeZone);
-        const timeLeft = credit.remainingMs <= 0
-          ? paint('expired', 'red')
-          : `in ${paint(formatDuration(credit.remainingMs), 'bold')}`;
-        output.push(sides(`    ${local}`, timeLeft));
+        const local = formatDate(credit.expiresAt, report.timeZone, { seconds: false });
         const utc = formatDate(credit.expiresAt, 'UTC', { seconds: false, weekday: false });
-        const detail = showIds ? `${utc}  ·  ${idLabel(credit.id)}` : utc;
-        output.push(line(paint(`    UTC ${detail.replace(/ UTC$/, '')}`, 'dim')));
+        const utcDetail = report.timeZone === 'UTC' ? '' : ` ${glyph.bullet} UTC ${utc.replace(/ UTC$/, '')}`;
+        const idDetail = showIds ? ` ${glyph.bullet} ${idLabel(credit.id)}` : '';
+        output.push(line(paint(truncate(`    ${local}${utcDetail}${idDetail}`, inner), 'dim')));
       } else {
-        output.push(line(paint('    Expiry time unavailable', 'red')));
         if (showIds) output.push(line(paint(`    ${idLabel(credit.id)}`, 'dim')));
       }
     }
@@ -906,9 +1011,10 @@ export function renderTable(report, options = {}) {
 
   output.push(separator());
   output.push(line([
-    paint('NOW', 'bold', 'red'), ' ≤1h  ',
-    paint('SOON', 'bold', 'yellow'), ' ≤6h  ',
-    paint('TODAY', 'bold', 'cyan'), ' ≤24h  ',
+    paint('EXPIRY', 'dim'), '  ',
+    paint('NOW', 'bold', 'red'), ' <=1h  ',
+    paint('SOON', 'bold', 'yellow'), ' <=6h  ',
+    paint('TODAY', 'bold', 'cyan'), ' <=24h  ',
     paint('LATER', 'bold', 'green'), ' >24h',
   ].join('')));
   output.push(border(glyph.bl, glyph.br));

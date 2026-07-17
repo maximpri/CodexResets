@@ -14,7 +14,7 @@ History fixtures must follow the strict schema documented in the README and use 
 
 If forecast semantics change, update the methodology documentation and JSON tests together; increment `methodology_version` when downstream interpretation changes. The secret scanner checks tracked and nonignored untracked files, but not ignored files or previous Git commits.
 
-The usage and credits endpoints are undocumented. Treat observed response fields as untrusted input, preserve graceful fallbacks, and avoid claims about fields whose semantics are not publicly documented.
+The direct ChatGPT usage and credits fetch endpoints are undocumented. The Codex app-server redemption method is documented, but app-server remains experimental. Treat observed response fields as untrusted input, preserve graceful fallbacks, and avoid claims about fields whose semantics are not publicly documented.
 
 ## Pull requests
 

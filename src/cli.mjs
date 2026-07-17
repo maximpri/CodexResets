@@ -18,6 +18,7 @@ import {
   recordHistory,
   summarizeHistory,
 } from './history.mjs';
+import { offerRedemption } from './redemption.mjs';
 import { normalizeReport, renderJson, renderTable, validateTimeZone } from './report.mjs';
 
 const packagePath = fileURLToPath(new URL('../package.json', import.meta.url));
@@ -31,7 +32,7 @@ Usage:
 
 Options:
   --timezone <IANA name>   Display time zone (default: system time zone)
-  --auth-file <path>       Codex auth.json location
+  --auth-file <path>       Codex auth.json location (redemption disabled)
   --format <table|json>    Output format (default: table)
   --color <auto|always|never>
                            ANSI color mode (default: auto)
@@ -46,6 +47,7 @@ Options:
   --history-file <path>    Alternative sanitized history file
   --watch <duration>        Poll every 1m to 24h; print material changes
   --notify                 Ring the terminal bell when watch output changes
+  --no-redeem-prompt       Never offer to consume a due banked reset
   -h, --help               Show this help
   -v, --version            Show the version
 
@@ -89,6 +91,7 @@ export function parseArguments(arguments_) {
     authFile: process.env.CODEX_AUTH_FILE
       ? resolve(process.env.CODEX_AUTH_FILE)
       : defaultAuthFile,
+    authFileExplicit: Boolean(process.env.CODEX_AUTH_FILE),
     format: 'table',
     colorMode: String(process.env.COLOR_MODE || 'auto').toLowerCase(),
     width: defaultWidth,
@@ -105,6 +108,7 @@ export function parseArguments(arguments_) {
     forgetHistory: false,
     watchMs: null,
     notify: false,
+    redeemPrompt: true,
     now: new Date(),
     fixedNow: false,
     help: false,
@@ -120,6 +124,7 @@ export function parseArguments(arguments_) {
         break;
       case '--auth-file':
         options.authFile = resolve(requireValue(arguments_, index, argument));
+        options.authFileExplicit = true;
         index += 1;
         break;
       case '--format':
@@ -164,6 +169,9 @@ export function parseArguments(arguments_) {
         break;
       case '--notify':
         options.notify = true;
+        break;
+      case '--no-redeem-prompt':
+        options.redeemPrompt = false;
         break;
       case '--show-ids':
         options.showIds = true;
@@ -398,10 +406,13 @@ function safeMessage(error) {
 export async function watchReports(options, dependencies = {}) {
   const build = dependencies.buildReport ?? buildReport;
   const render = dependencies.renderReport ?? renderReport;
+  const offer = dependencies.offerRedemption ?? offerRedemption;
   const sleep = dependencies.wait ?? wait;
+  const stdin = dependencies.stdin ?? process.stdin;
   const stdout = dependencies.stdout ?? process.stdout;
   const stderr = dependencies.stderr ?? process.stderr;
   const maximumIterations = dependencies.maximumIterations ?? Number.POSITIVE_INFINITY;
+  const dismissedRedemptionKeys = new Set();
   let lastFingerprint = null;
   let completedIterations = 0;
   let consecutiveFailures = 0;
@@ -410,13 +421,25 @@ export async function watchReports(options, dependencies = {}) {
   while (attempts < maximumIterations) {
     attempts += 1;
     try {
-      const report = await build(options);
+      let report = await build(options);
       const fingerprint = recommendationFingerprint(report);
       if (fingerprint !== lastFingerprint) {
         if (completedIterations && options.notify && stdout.isTTY) stderr.write('\u0007');
         if (completedIterations) stdout.write('\n');
         stdout.write(render(report, options));
         lastFingerprint = fingerprint;
+      }
+      const redemption = await offer(report, options, {
+        input: stdin,
+        terminal: stdout,
+        output: stderr,
+        dismissedKeys: dismissedRedemptionKeys,
+      });
+      if (redemption.status === 'consumed') {
+        report = await build(options);
+        stdout.write('\n');
+        stdout.write(render(report, options));
+        lastFingerprint = recommendationFingerprint(report);
       }
       completedIterations += 1;
       consecutiveFailures = 0;
@@ -460,7 +483,14 @@ async function main() {
     return;
   }
   if (options.watchMs === null) {
-    process.stdout.write(renderReport(await buildReport(options), options));
+    let report = await buildReport(options);
+    process.stdout.write(renderReport(report, options));
+    const redemption = await offerRedemption(report, options);
+    if (redemption.status === 'consumed') {
+      report = await buildReport(options);
+      process.stdout.write('\n');
+      process.stdout.write(renderReport(report, options));
+    }
     return;
   }
 
