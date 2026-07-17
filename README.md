@@ -1,6 +1,6 @@
 # CodexResets
 
-CodexResets is a read-only CLI and Codex plugin for checking exactly when your Codex usage windows reset. It leads with the five-hour and weekly limits, shows remaining capacity, and keeps natural usage resets separate from banked full-reset expiry dates and purchased credits.
+CodexResets is a safe-by-default CLI and Codex plugin for checking exactly when your Codex usage windows reset. It leads with the five-hour and weekly limits, shows remaining capacity, and keeps natural usage resets separate from banked full-reset expiry dates and purchased credits. When a banked reset is actually due, an interactive session can ask for permission and use it only after explicit approval.
 
 > [!IMPORTANT]
 > CodexResets is an independent community project, not an official OpenAI product. It uses undocumented ChatGPT endpoints that may change. Use `/usage` in the Codex TUI for the supported OpenAI experience.
@@ -13,7 +13,7 @@ CodexResets is a read-only CLI and Codex plugin for checking exactly when your C
 - A chronological milestone list for natural resets, projected depletion, recommendations, and banked-reset expiry
 - Banked full resets ordered by expiry, with the next decision-relevant reset highlighted
 
-CodexResets never consumes a banked reset, purchases usage credits, or changes auto-reload settings.
+Normal reports never consume a banked reset, purchase usage credits, or change auto-reload settings. A due reset can be consumed only from an interactive table session after the user types the full word `yes` at the irreversible-action prompt.
 
 ## Snapshots
 
@@ -49,6 +49,7 @@ When checking a weekly reset discrepancy, compare only the Analytics weekly-rese
 - Node.js 18 or newer and npm
 - Bash and curl
 - A current Codex CLI sign-in stored in `~/.codex/auth.json`
+- The `codex` executable on `PATH` to consume an approved reset through Codex app-server
 
 Credentials stored only in an operating-system keyring cannot be read by this tool.
 
@@ -98,7 +99,7 @@ Use $check-codex-resets to show my weekly usage and reset date.
 Compare my weekly reset with Codex Analytics.
 ```
 
-The plugin runs the same read-only checker and reports `weekly_usage.resets_at` first for weekly-reset questions. It does not substitute a banked-reset expiry date when weekly usage is unavailable.
+The plugin runs the same checker and reports `weekly_usage.resets_at` first for weekly-reset questions. It does not substitute a banked-reset expiry date when weekly usage is unavailable. When the recommendation becomes due, the skill must show the confirmation prompt to the user and must not submit `yes` until the user explicitly approves using one banked reset.
 
 ## Use
 
@@ -124,6 +125,27 @@ codexresets --format json \
   | node -e 'let s=""; process.stdin.on("data", d => s += d).on("end", () => console.log(JSON.parse(s).weekly_usage?.resets_at ?? "unavailable"))'
 ```
 
+### Use a due banked reset
+
+When the recommendation reaches `USE NOW`, `USE NEAR LIMIT`, or `USE BEFORE EXPIRY`, an interactive table session explains the projected reset value and asks:
+
+```text
+Consuming it is permanent and cannot be undone.
+Type "yes" to consume one banked reset now:
+```
+
+Only the full word `yes` approves the action. Any other answer leaves the reset untouched. After approval, CodexResets calls the documented Codex app-server `account/rateLimitResetCredit/consume` operation with a new idempotency key and refreshes the account report. See the [Codex app-server reset documentation](https://learn.chatgpt.com/docs/app-server#8-earned-rate-limit-resets-chatgpt).
+
+Redemption is never offered when output is JSON, stdin/stdout is not a terminal, `--input`, `--now`, or a custom `--auth-file` is active, or `--no-redeem-prompt` is set. Custom auth files are excluded because Codex app-server must not accidentally act on a different signed-in account. A declined reset is not offered again during the same watch process.
+
+To keep watching until the recommendation becomes due, leave an interactive watcher running:
+
+```bash
+codexresets --watch 15m --record
+```
+
+The watcher pauses at the same exact-`yes` permission prompt when it is time to use a reset.
+
 Common examples:
 
 ```bash
@@ -145,6 +167,7 @@ Useful options:
 | `--forget-history` | Delete saved usage history after validating it. |
 | `--watch <duration>` | Refresh every `1m` to `24h` and print meaningful changes. |
 | `--notify` | Ring the terminal bell when a watched recommendation changes. |
+| `--no-redeem-prompt` | Disable interactive offers to consume a due banked reset. |
 | `--auth-file <path>` | Use a credential file outside `~/.codex/auth.json`. |
 | `--ascii` | Use ASCII borders if box-drawing characters display poorly. |
 | `--help` | Show every option. |
@@ -168,6 +191,9 @@ codexresets --forget-history
 - Your Codex credential file is read locally. Access tokens are sent only to the relevant OpenAI ChatGPT services.
 - Tokens and raw authentication responses are never printed.
 - If a session refresh is required, `auth.json` may be updated and secured with file mode `0600`.
+- Approved redemption starts the local `codex app-server` process and sends only the selected opaque reset ID plus a one-time idempotency key.
+- Consuming a banked reset is irreversible. CodexResets requires an interactive exact-`yes` confirmation and refreshes limits after a successful or already-completed redemption.
+- Codex app-server is an experimental interface and may change; use a current Codex CLI release.
 - Forecasts are estimates. Usage patterns and undocumented service responses can change.
 - Keep `--show-ids` off when sharing screenshots or logs.
 - Never share `~/.codex/auth.json` or an unreviewed API response.
@@ -179,6 +205,8 @@ See [SECURITY.md](SECURITY.md) for security details and private vulnerability re
 **Credentials not found:** Run `codex login` and confirm Codex uses file-based credential storage. If the file is elsewhere, use `--auth-file <path>`.
 
 **Session refresh failed:** Run `codex login` again, then retry.
+
+**Reset redemption cannot start:** Confirm `codex --version` works and that the Codex CLI is signed in with the same ChatGPT account.
 
 **Borders or colors look wrong:** Run `codexresets --ascii --color never`.
 

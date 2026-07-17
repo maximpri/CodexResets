@@ -14,6 +14,7 @@ test('uses CodexResets as the public CLI name', () => {
   const output = execFileSync(process.execPath, [cli.pathname, '--help'], { encoding: 'utf8' });
   assert.match(output, /^CodexResets$/m);
   assert.match(output, /^  codexresets \[options\]$/m);
+  assert.match(output, /--no-redeem-prompt/);
 });
 
 test('renders an offline fixture without credentials', () => {
@@ -101,6 +102,8 @@ test('validates safe watch intervals and incompatible options', () => {
     () => parseArguments(['--auth-file', '/tmp/same', '--history-file', '/tmp/same']),
     /must be different/,
   );
+  assert.equal(parseArguments(['--no-redeem-prompt']).redeemPrompt, false);
+  assert.equal(parseArguments(['--auth-file', '/tmp/custom-auth.json']).authFileExplicit, true);
 });
 
 test('offline fixtures ignore ambient recorded history', () => {
@@ -254,6 +257,29 @@ test('watch mode emits only material changes and notifies on stderr', async () =
   assert.equal(stdout, 'WAIT_FOR_WEEKLY_RESET\n\nUSE_NEAR_LIMIT\n');
   assert.equal(stderr, '\u0007');
   assert.deepEqual(waits, [60_000, 60_000]);
+});
+
+test('watch mode refreshes and renders account limits after a consumed reset', async () => {
+  const reports = [
+    watchReport('USE_NOW', '2026-07-14T00:00:00Z'),
+    watchReport('WAIT_FOR_WEEKLY_RESET'),
+  ];
+  let stdout = '';
+  let offers = 0;
+  await watchReports({ watchMs: 60_000, notify: false }, {
+    buildReport: async () => reports.shift(),
+    renderReport: (report) => `${report.recommendation.action}\n`,
+    offerRedemption: async () => {
+      offers += 1;
+      return { status: 'consumed', outcome: 'reset' };
+    },
+    wait: async () => {},
+    stdout: { isTTY: true, write: (value) => { stdout += value; } },
+    stderr: { isTTY: true, write: () => {} },
+    maximumIterations: 1,
+  });
+  assert.equal(offers, 1);
+  assert.equal(stdout, 'USE_NOW\n\nWAIT_FOR_WEEKLY_RESET\n');
 });
 
 test('watch mode backs off retryable failures after its initial baseline', async () => {
