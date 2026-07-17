@@ -7,10 +7,10 @@ CodexResets shows your Codex usage limits, saved full-reset credits, and a sugge
 
 ## What it shows
 
-- Five-hour and weekly usage, remaining capacity, and natural reset times
-- Estimated depletion times based on your current pace
-- Saved full-reset credits and their expiry times
-- A recommendation to use, save, or skip the next credit
+- A decision-first recommendation to use, keep, or skip the next saved reset
+- A chronological milestone list for the recommended action, natural resets, projected depletion, and the next credit expiry
+- Five-hour and weekly limit status with remaining capacity, reset timing, pace confidence, and clear `ON TRACK` or `AT RISK` labels
+- Saved full-reset credits ordered by expiry, with the next decision-relevant credit highlighted
 
 CodexResets is read-only: it never consumes a reset credit.
 
@@ -58,6 +58,15 @@ Run a report:
 ```bash
 codexresets
 ```
+
+The table is ordered for quick decisions:
+
+1. **Decision** states what to do, when to do it, the expected reset value, and the credit deadline.
+2. **Key milestones** puts the recommendation, limit resets, projected depletion, and next expiry on one timeline. `◆` marks the recommended action, `!` marks a risk or deadline, and `●` marks an informational checkpoint.
+3. **Limit status** summarizes whether each active usage window should last until its natural reset.
+4. **Saved resets** lists available credits by expiry and marks the next one as `NEXT`.
+
+Times are shown in the selected local time zone. Relative durations such as `IN 3h 34m` make the next event easy to compare; use `--timezone` when planning in another location.
 
 Common examples:
 

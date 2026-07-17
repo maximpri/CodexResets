@@ -315,22 +315,29 @@ test('terminal output neutralizes control and direction-changing characters', ()
   assert.match(output, /Safe title/);
 });
 
-test('table output hides identifiers and uses server usage without decorative progress bars', () => {
+test('table output leads with the decision and highlights chronological milestones', () => {
   const report = normalizeReport(fixture, { now, timeZone: 'UTC' });
   const output = renderTable(report, { color: false, width: 96 });
   assert.doesNotMatch(output, /example0000000/);
   assert.doesNotMatch(output, /total earned/i);
   assert.doesNotMatch(output, /█|░/);
   assert.match(output, /20% used/);
-  assert.match(output, /5-HOUR USAGE/);
+  assert.match(output, /DECISION/);
+  assert.match(output, /USE A SAVED RESET IN 3d 17h 23m/);
+  assert.match(output, /KEY MILESTONES/);
+  assert.match(output, /USE SAVED RESET/);
+  assert.match(output, /NEXT SAVED RESET EXPIRES/);
+  assert.match(output, /WEEKLY CAPACITY RUNS OUT/);
+  assert.match(output, /LIMIT STATUS/);
+  assert.match(output, /AT RISK/);
   assert.match(output, /points\/hour/);
   assert.match(output, /day\/night weighted/);
-  assert.match(output, /Estimated empty/);
-  assert.match(output, /SMART RESET PLAN/);
   assert.match(output, /NEAR LIMIT/);
-  assert.match(output, /Weekly reset value  95 points/);
-  assert.match(output, /3 available credits/);
-  assert.match(output, /in 3d 21h 1m/);
+  assert.match(output, /EXPECTED RESET VALUE/);
+  assert.match(output, /weekly 95 points/);
+  assert.match(output, /SAVED RESETS/);
+  assert.match(output, /3 AVAILABLE/);
+  assert.match(output, /credit expires in 3d 21h 1m/);
 });
 
 test('every uncolored table line has the requested width', () => {

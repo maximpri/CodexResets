@@ -27,11 +27,15 @@ test('renders an offline fixture without credentials', () => {
   ], { encoding: 'utf8' });
 
   assert.match(output, /CODEXRESETS/);
-  assert.match(output, /WEEKLY USAGE/);
-  assert.match(output, /5-HOUR USAGE/);
+  assert.match(output, /DECISION/);
+  assert.match(output, /USE A SAVED RESET IN/);
+  assert.match(output, /KEY MILESTONES/);
+  assert.match(output, /USE SAVED RESET/);
+  assert.match(output, /LIMIT STATUS/);
+  assert.match(output, /WEEKLY CAPACITY RUNS OUT/);
   assert.match(output, /20% used/);
-  assert.match(output, /SMART RESET PLAN/);
-  assert.match(output, /3 available credits/);
+  assert.match(output, /SAVED RESETS/);
+  assert.match(output, /3 AVAILABLE/);
   assert.doesNotMatch(output, /example0000000/);
 });
 
@@ -128,7 +132,7 @@ test('offline fixtures ignore ambient recorded history', () => {
       CODEX_HISTORY_FILE: '',
     },
   });
-  assert.match(output, /20\.32 points\/day day\/night weighted/);
+  assert.match(output, /20\.32 points\/day .*day\/night weighted/);
   assert.doesNotMatch(output, /recorded delta/);
   assert.equal(existsSync(legacyFile), true);
   assert.equal(existsSync(historyFile), false);
