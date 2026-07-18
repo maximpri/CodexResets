@@ -99,7 +99,7 @@ Use $check-codex-resets to show my weekly usage and reset date.
 Compare my weekly reset with Codex Analytics.
 ```
 
-The plugin runs the same checker and reports `weekly_usage.resets_at` first for weekly-reset questions. It does not substitute a banked-reset expiry date when weekly usage is unavailable. When the recommendation becomes due, the skill must show the confirmation prompt to the user and must not submit `yes` until the user explicitly approves using one banked reset.
+The plugin runs the same checker and reports `weekly_usage.resets_at` first for weekly-reset questions. It does not substitute a banked-reset expiry date when weekly usage is unavailable. A `LOW`-confidence recommendation is a provisional forecast, not a reason by itself to schedule a banked reset; the plugin should identify the natural reset and advise checking again closer to the projected limit. When a recommendation becomes due, the skill must show the confirmation prompt to the user and must not submit `yes` until the user explicitly approves using one banked reset.
 
 ## Use
 
@@ -117,6 +117,16 @@ The table is ordered for quick decisions:
 4. **Saved resets** lists available credits by expiry and marks the next one as `NEXT`.
 
 Times are shown in the selected local time zone. Relative durations such as `IN 3h 34m` make the next event easy to compare; use `--timezone` when planning in another location.
+
+### Interpret a reset recommendation
+
+A future `USE A SAVED RESET IN ...` message is a forecast of when usage may reach the 95% target if the measured pace continues. It is not an instruction to consume a reset now. Check the confidence shown beside the constraining usage window:
+
+- `LOW` confidence commonly appears near the start of a window, when a small amount of early usage is being extrapolated across several days. Keep the saved reset and recheck instead of scheduling redemption from that estimate alone.
+- `MEDIUM` and `HIGH` confidence reflect more observation, but the recommendation is still an estimate and should be checked against current usage when it becomes due.
+- `--record` gives later reports useful historical samples, while `--watch 15m --record` can keep checking as the projection changes.
+
+Also compare the recommendation with `WEEKLY LIMIT RESETS`. If the projected 95% point occurs shortly before the natural weekly reset, using a saved reset is useful only when uninterrupted capacity during that gap matters to you. When the saved reset remains valid after the natural reset, you can instead keep it, let the weekly window reset naturally, and reassess before the saved reset expires. The CLI cannot decide that personal tradeoff from percentages alone.
 
 For an exact weekly reset value suitable for scripts, request JSON and read `weekly_usage.resets_at`:
 

@@ -29,6 +29,7 @@ All notable changes to this project will be documented here. The format follows 
 ### Changed
 
 - Redesigned the terminal report as a decision-first reset control view, with the recommended action and deadline first, a chronological milestone timeline, explicit limit risk states, and a compact saved-reset inventory.
+- Clarified that low-confidence future reset recommendations are provisional forecasts and documented the option to wait for a nearby natural weekly reset when uninterrupted capacity is unnecessary.
 - Renamed the project to CodexResets, with `codexresets` as the primary package and command name. The previous command remains available as a compatibility alias.
 - Renamed the default local history file to `codexresets-history.json`, with validated one-time migration from the previous filename.
 - Custom credential-file paths receive separately scoped default history files.
