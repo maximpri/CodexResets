@@ -420,7 +420,7 @@ function buildRecommendation(fiveHourUsage, weeklyUsage, credits, checkedAt, tim
         action: 'NO_SAVED_RESET',
         constrainingWindow: exhaustion?.name ?? null,
         reason: exhaustion
-          ? `${exhaustion.label} usage is projected to run out before its reset, but no full reset is saved.`
+          ? `${exhaustion.label} usage is projected to run out before its reset, but no banked reset is available.`
           : 'The active usage windows are expected to reset before current usage runs out.',
       },
     };
@@ -519,7 +519,7 @@ function buildRecommendation(fiveHourUsage, weeklyUsage, credits, checkedAt, tim
           projectedUsagePercent: estimatedResetValuePercent,
           estimatedResetValuePercent,
           estimatedResetValues,
-          reason: 'The next saved full reset has no projected recovery value before it expires.',
+          reason: 'The next banked reset has no projected recovery value before it expires.',
         },
       };
     }
@@ -534,7 +534,7 @@ function buildRecommendation(fiveHourUsage, weeklyUsage, credits, checkedAt, tim
         projectedUsagePercent: estimatedResetValuePercent,
         estimatedResetValuePercent,
         estimatedResetValues,
-        reason: 'Use the next saved full reset near expiry to recover its projected value before it is lost.',
+        reason: 'Use the next banked reset near expiry to recover its projected value before it is lost.',
       },
     };
   }
@@ -548,7 +548,7 @@ function buildRecommendation(fiveHourUsage, weeklyUsage, credits, checkedAt, tim
       projectionAt: planningUsage.resetsAt,
       projectedUsagePercent: planningUsage.projectedUsedAtReset,
       reason: planningUsage.averagePercentPerDay === null
-        ? 'There is not enough usage yet for a reliable pace estimate, and the saved reset outlives this window.'
+        ? 'There is not enough usage yet for a reliable pace estimate, and the banked reset outlives this window.'
         : 'The active usage windows are expected to reset before reaching the near-limit target.',
     },
   };
@@ -709,7 +709,257 @@ export function renderJson(report, { showIds = false } = {}) {
   return `${JSON.stringify(output, null, 2)}\n`;
 }
 
-export function renderTable(report, options = {}) {
+function formatFriendlyDate(date, timeZone) {
+  if (!date || !Number.isFinite(date.getTime())) return 'an unknown time';
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZoneName: 'short',
+  }).format(date);
+}
+
+function compactUsageState(usage) {
+  if (!usage) return null;
+  if (usage.exhaustsBeforeReset) return { label: 'AT RISK', style: 'red' };
+  if (usage.averagePercentPerDay === null) return { label: 'LEARNING', style: 'dim' };
+  return { label: 'ON TRACK', style: 'green' };
+}
+
+function recommendationUsage(report) {
+  return report.recommendation.constrainingWindow === 'five_hour'
+    ? report.fiveHourUsage
+    : report.recommendation.constrainingWindow === 'weekly'
+      ? report.weeklyUsage
+      : report.weeklyUsage ?? report.fiveHourUsage;
+}
+
+function compactResetValue(recommendation) {
+  const values = recommendation.estimatedResetValues ?? {};
+  const labels = [
+    values.fiveHourPercent === null || values.fiveHourPercent === undefined
+      ? null
+      : `${Number(values.fiveHourPercent.toFixed(1))} five-hour points`,
+    values.weeklyPercent === null || values.weeklyPercent === undefined
+      ? null
+      : `${Number(values.weeklyPercent.toFixed(1))} weekly points`,
+  ].filter(Boolean);
+  return labels.join(' and ');
+}
+
+function compactDecision(report) {
+  const recommendation = report.recommendation;
+  const usage = recommendationUsage(report);
+  const confidence = usage?.confidence ?? 'LOW';
+  const recommendedAt = recommendation.recommendedAt;
+  const future = recommendedAt && recommendedAt > report.checkedAt;
+  const when = recommendedAt
+    ? formatFriendlyDate(recommendedAt, report.timeZone)
+    : null;
+
+  if (['USE_NEAR_LIMIT', 'USE_BEFORE_EXPIRY'].includes(recommendation.action) && future) {
+    if (confidence === 'LOW') {
+      return {
+        title: 'NO ACTION NOW',
+        style: 'green',
+        next: `Recheck closer to ${when}; this forecast is low confidence.`,
+      };
+    }
+    return {
+      title: 'PLAN TO RECHECK',
+      style: 'yellow',
+      next: recommendation.action === 'USE_BEFORE_EXPIRY'
+        ? `Recheck near ${when}; redeem only if the reset value is still worthwhile.`
+        : `Recheck near ${when}; redeem only if usage is still near its limit.`,
+    };
+  }
+
+  if (['USE_NOW', 'USE_NEAR_LIMIT', 'USE_BEFORE_EXPIRY'].includes(recommendation.action)) {
+    const value = compactResetValue(recommendation);
+    return {
+      title: 'BANKED RESET READY',
+      style: 'yellow',
+      next: value
+        ? `Redeem now only if restoring about ${value} is useful to you.`
+        : 'Redeem now only if restoring the eligible usage window is useful to you.',
+    };
+  }
+
+  if (['WAIT_FOR_WEEKLY_RESET', 'WAIT_FOR_FIVE_HOUR_RESET'].includes(recommendation.action)) {
+    const window = recommendation.action === 'WAIT_FOR_WEEKLY_RESET' ? 'weekly' : 'five-hour';
+    return {
+      title: 'NO ACTION NOW',
+      style: 'green',
+      next: `Let the ${window} limit reset naturally before using a banked reset.`,
+    };
+  }
+
+  if (recommendation.action === 'SKIP_EXPIRING_RESET') {
+    return {
+      title: 'NO ACTION NEEDED',
+      style: 'green',
+      next: 'No useful recovery is expected before this banked reset expires.',
+    };
+  }
+
+  if (recommendation.action === 'NO_SAVED_RESET') {
+    return {
+      title: 'NO BANKED RESET AVAILABLE',
+      style: 'dim',
+      next: 'Continue using Codex; there is no banked reset to manage.',
+    };
+  }
+
+  return {
+    title: 'CHECK USAGE',
+    style: 'cyan',
+    next: 'Usage data is incomplete; check again before deciding.',
+  };
+}
+
+function renderCompactTable(report, options = {}) {
+  const color = Boolean(options.color);
+  const ascii = Boolean(options.ascii);
+  const requestedWidth = Number(options.width);
+  const width = Math.min(120, Math.max(40, Number.isFinite(requestedWidth) ? requestedWidth : 96));
+  const framed = width >= 68;
+  const contentWidth = framed ? width - 4 : width;
+  const glyph = ascii
+    ? { tl: '+', tr: '+', bl: '+', br: '+', h: '-', v: '|', ml: '+', mr: '+', bullet: '*' }
+    : { tl: '╭', tr: '╮', bl: '╰', br: '╯', h: '─', v: '│', ml: '├', mr: '┤', bullet: '•' };
+  const paint = (value, ...styles) => color
+    ? `${styles.map((style) => ANSI[style]).join('')}${value}${ANSI.reset}`
+    : String(value);
+  const line = (content = '') => {
+    if (!framed) return content;
+    const padding = Math.max(0, contentWidth - visibleLength(content));
+    return `${glyph.v} ${content}${' '.repeat(padding)} ${glyph.v}`;
+  };
+  const border = (left, right) => `${left}${glyph.h.repeat(width - 2)}${right}`;
+  const separator = () => framed ? border(glyph.ml, glyph.mr) : '';
+  const output = [];
+  const pushLine = (content = '') => output.push(line(content));
+  const wrap = (value, firstPrefix = '', restPrefix = ' '.repeat(visibleLength(firstPrefix))) => {
+    const words = terminalSafe(value).split(' ').filter(Boolean);
+    const rows = [];
+    let prefix = firstPrefix;
+    let current = '';
+    for (const word of words) {
+      const maximum = Math.max(1, contentWidth - visibleLength(prefix));
+      if (!current) {
+        current = truncate(word, maximum);
+      } else if (visibleLength(`${current} ${word}`) <= maximum) {
+        current = `${current} ${word}`;
+      } else {
+        rows.push(`${prefix}${current}`);
+        prefix = restPrefix;
+        current = truncate(word, Math.max(1, contentWidth - visibleLength(prefix)));
+      }
+    }
+    rows.push(`${prefix}${current}`);
+    return rows;
+  };
+  const pushWrapped = (value, firstPrefix = '', restPrefix, ...styles) => {
+    for (const row of wrap(value, firstPrefix, restPrefix)) pushLine(paint(row, ...styles));
+  };
+  const labelPrefix = (label) => `${label.padEnd(9)} `;
+  const continuationPrefix = ' '.repeat(10);
+  const numberLabel = (value) => Number.isInteger(value)
+    ? String(value)
+    : value.toFixed(1).replace(/\.0$/, '');
+
+  if (framed) output.push(border(glyph.tl, glyph.tr));
+  const checked = `checked ${formatFriendlyDate(report.checkedAt, report.timeZone)}`;
+  const brand = 'CODEXRESETS';
+  if (visibleLength(brand) + visibleLength(checked) + 1 <= contentWidth) {
+    const gap = ' '.repeat(contentWidth - visibleLength(brand) - visibleLength(checked));
+    pushLine(`${paint(brand, 'bold')}${gap}${paint(checked, 'dim')}`);
+  } else {
+    pushLine(paint(brand, 'bold'));
+    pushWrapped(checked, '', '', 'dim');
+  }
+  if (framed) output.push(separator());
+  else pushLine();
+
+  const decision = compactDecision(report);
+  pushLine(paint(decision.title, 'bold', decision.style));
+  pushWrapped(decision.next, labelPrefix('Next'), continuationPrefix);
+  pushLine();
+
+  const appendUsage = (usage) => {
+    if (!usage) return;
+    const state = compactUsageState(usage);
+    pushWrapped(
+      `${numberLabel(usage.usedPercent)}% used ${glyph.bullet} ${numberLabel(usage.remainingPercent)}% left`,
+      labelPrefix(usage.label),
+      continuationPrefix,
+      'bold',
+    );
+    pushWrapped(
+      `resets ${formatFriendlyDate(usage.resetsAt, report.timeZone)} (${formatDuration(usage.remainingMs)}) ${glyph.bullet} ${state.label}`,
+      continuationPrefix,
+      continuationPrefix,
+      state.style,
+    );
+  };
+  appendUsage(report.weeklyUsage);
+  appendUsage(report.fiveHourUsage);
+  if (!report.weeklyUsage && !report.fiveHourUsage) {
+    pushWrapped('Usage data is unavailable in this response.', labelPrefix('Usage'), continuationPrefix, 'dim');
+  }
+
+  const forecastUsage = recommendationUsage(report);
+  if (forecastUsage?.estimatedExhaustionAt && forecastUsage.exhaustsBeforeReset) {
+    pushWrapped(
+      `${forecastUsage.label} capacity may run out ${formatFriendlyDate(forecastUsage.estimatedExhaustionAt, report.timeZone)} ${glyph.bullet} ${forecastUsage.confidence}`,
+      labelPrefix('Forecast'),
+      continuationPrefix,
+      forecastUsage.confidence === 'LOW' ? 'dim' : 'yellow',
+    );
+  }
+
+  if (report.nextSavedReset) {
+    const available = `${report.credits.length} available`;
+    const expiry = report.nextSavedReset.expiresAt
+      ? `expires ${formatFriendlyDate(report.nextSavedReset.expiresAt, report.timeZone)}`
+      : 'expiry unknown';
+    pushWrapped(
+      `${expiry} ${glyph.bullet} ${available}`,
+      labelPrefix('Banked'),
+      continuationPrefix,
+      report.nextSavedReset.urgency === 'NOW' ? 'red' : 'yellow',
+    );
+  } else {
+    pushWrapped('none available', labelPrefix('Banked'), continuationPrefix, 'dim');
+  }
+
+  if (framed) output.push(separator());
+  else pushLine();
+  if (options.details && !framed) {
+    pushWrapped(
+      'Widen the terminal to 68 columns for the detailed table, or use --format json.',
+      labelPrefix('Details'),
+      continuationPrefix,
+      'dim',
+    );
+  } else {
+    pushWrapped('codexresets --details', labelPrefix('Details'), continuationPrefix, 'dim');
+  }
+  const lowConfidence = [report.weeklyUsage, report.fiveHourUsage]
+    .filter(Boolean)
+    .some((usage) => usage.confidence === 'LOW');
+  if (lowConfidence && !options.input && !options.record) {
+    pushWrapped('codexresets --record', labelPrefix('Improve'), continuationPrefix, 'dim');
+  }
+  if (framed) output.push(border(glyph.bl, glyph.br));
+  return `${output.join('\n')}\n`;
+}
+
+function renderDetailedTable(report, options = {}) {
   const color = Boolean(options.color);
   const ascii = Boolean(options.ascii);
   const showIds = Boolean(options.showIds);
@@ -747,15 +997,15 @@ export function renderTable(report, options = {}) {
     WAIT_FOR_WEEKLY_RESET: 'WAIT',
     WAIT_FOR_FIVE_HOUR_RESET: 'WAIT',
     SKIP_EXPIRING_RESET: 'SKIP / WAIT',
-    NO_SAVED_RESET: 'NO CREDIT',
+    NO_SAVED_RESET: 'NO BANKED',
     CHECK_USAGE: 'CHECK USAGE',
   };
   const actionHeadline = {
-    USE_NOW: 'USE A SAVED RESET NOW',
-    WAIT_FOR_WEEKLY_RESET: 'KEEP YOUR SAVED RESET',
-    WAIT_FOR_FIVE_HOUR_RESET: 'KEEP YOUR SAVED RESET',
-    SKIP_EXPIRING_RESET: 'LET THIS SAVED RESET EXPIRE',
-    NO_SAVED_RESET: 'NO SAVED RESET TO USE',
+    USE_NOW: 'USE A BANKED RESET NOW',
+    WAIT_FOR_WEEKLY_RESET: 'KEEP YOUR BANKED RESET',
+    WAIT_FOR_FIVE_HOUR_RESET: 'KEEP YOUR BANKED RESET',
+    SKIP_EXPIRING_RESET: 'LET THIS BANKED RESET EXPIRE',
+    NO_SAVED_RESET: 'NO BANKED RESET TO USE',
     CHECK_USAGE: 'CHECK USAGE BEFORE DECIDING',
   };
   const numberLabel = (value, decimals = 1) => Number.isInteger(value)
@@ -786,7 +1036,10 @@ export function renderTable(report, options = {}) {
       }
     }
     if (current || !rows.length) rows.push(current);
-    return rows.map((row) => line(paint(`${prefix}${row}`, ...styles)));
+    return rows.map((row, index) => line(paint(
+      `${index === 0 ? prefix : ' '.repeat(visibleLength(prefix))}${row}`,
+      ...styles,
+    )));
   };
   const border = (left, right) => `${left}${glyph.h.repeat(width - 2)}${right}`;
   const separator = () => border(glyph.ml, glyph.mr);
@@ -809,8 +1062,8 @@ export function renderTable(report, options = {}) {
     : null;
   const dynamicHeadline = ['USE_NEAR_LIMIT', 'USE_BEFORE_EXPIRY'].includes(recommendation.action)
     ? recommendationRemaining <= 0
-      ? 'USE A SAVED RESET NOW'
-      : `USE A SAVED RESET IN ${formatDuration(recommendationRemaining)}`
+      ? 'USE A BANKED RESET NOW'
+      : `USE A BANKED RESET IN ${formatDuration(recommendationRemaining)}`
     : actionHeadline[recommendation.action] ?? recommendation.action;
   output.push(sides(paint('DECISION', 'bold'), recommendationBadge));
   output.push(line(paint(dynamicHeadline, 'bold', actionStyle[recommendation.action] ?? 'dim')));
@@ -846,7 +1099,7 @@ export function renderTable(report, options = {}) {
       : recommendation.action === 'WAIT_FOR_FIVE_HOUR_RESET'
         ? 'AT 5-HOUR RESET'
       : recommendation.action === 'SKIP_EXPIRING_RESET'
-        ? 'AT CREDIT EXPIRY'
+        ? 'AT BANKED RESET EXPIRY'
         : 'PROJECTED USAGE';
     output.push(sides(
       paint(projectionLabel, 'dim'),
@@ -857,10 +1110,10 @@ export function renderTable(report, options = {}) {
     const expiry = report.nextSavedReset.expiresAt;
     output.push(sides(
       paint('DECISION DEADLINE', 'dim'),
-      expiry ? `credit expires in ${paint(formatDuration(report.nextSavedReset.remainingMs), 'bold')}` : paint('credit expiry unknown', 'dim'),
+      expiry ? `banked reset expires in ${paint(formatDuration(report.nextSavedReset.remainingMs), 'bold')}` : paint('banked reset expiry unknown', 'dim'),
     ));
   } else {
-    output.push(line(paint('No unexpired full reset is saved.', 'dim')));
+    output.push(line(paint('No unexpired banked reset is available.', 'dim')));
   }
 
   const milestones = [];
@@ -868,11 +1121,10 @@ export function renderTable(report, options = {}) {
     if (!at || !Number.isFinite(at.getTime()) || at < report.checkedAt) return;
     milestones.push({ at, label, tone, kind });
   };
-  addMilestone(report.checkedAt, 'NOW / REPORT CHECKED', 'dim', 'now');
   if (recommendation.recommendedAt) {
     addMilestone(
       recommendation.recommendedAt,
-      recommendation.action === 'USE_NOW' ? 'USE SAVED RESET NOW' : 'USE SAVED RESET',
+      recommendation.action === 'USE_NOW' ? 'USE BANKED RESET NOW' : 'USE BANKED RESET',
       actionStyle[recommendation.action] ?? 'yellow',
       'focus',
     );
@@ -886,7 +1138,7 @@ export function renderTable(report, options = {}) {
   if (report.nextSavedReset?.expiresAt) {
     addMilestone(
       report.nextSavedReset.expiresAt,
-      'NEXT SAVED RESET EXPIRES',
+      'NEXT BANKED RESET EXPIRES',
       urgencyStyle[report.nextSavedReset.urgency] ?? 'dim',
       'risk',
     );
@@ -894,12 +1146,7 @@ export function renderTable(report, options = {}) {
   addMilestone(report.fiveHourUsage?.resetsAt, '5-HOUR LIMIT RESETS', 'green');
   addMilestone(report.weeklyUsage?.resetsAt, 'WEEKLY LIMIT RESETS', 'green');
   milestones.sort((a, b) => a.at - b.at || (a.kind === 'focus' ? -1 : 1));
-  const visibleMilestones = milestones.filter((milestone) => !(
-    milestone.kind === 'now'
-      && milestones.some((candidate) => (
-        candidate.kind === 'focus' && candidate.at.getTime() === milestone.at.getTime()
-      ))
-  ));
+  const visibleMilestones = milestones;
 
   output.push(separator());
   const milestoneContext = `${report.timeZone} ${glyph.bullet} chronological`;
@@ -968,12 +1215,12 @@ export function renderTable(report, options = {}) {
 
   if (count === 0) {
     output.push(separator());
-    output.push(sides(paint('SAVED RESETS', 'bold'), paint('NONE AVAILABLE', 'dim')));
-    output.push(line('No reset credits are currently available.'));
+    output.push(sides(paint('BANKED RESETS', 'bold'), paint('NONE AVAILABLE', 'dim')));
+    output.push(line('No banked resets are currently available.'));
   } else {
     output.push(separator());
     output.push(sides(
-      paint('SAVED RESETS', 'bold'),
+      paint('BANKED RESETS', 'bold'),
       paint(`${count} AVAILABLE`, 'bold', 'green'),
     ));
     for (const [index, credit] of report.credits.entries()) {
@@ -993,7 +1240,7 @@ export function renderTable(report, options = {}) {
           - 1,
       );
       output.push(sides(
-        `${creditPrefix}${paint(truncate(terminalSafe(credit.title) || 'Reset credit', titleWidth), 'bold')}${nextLabel}`,
+        `${creditPrefix}${paint(truncate('Banked reset', titleWidth), 'bold')}${nextLabel}`,
         creditRight,
       ));
 
@@ -1019,4 +1266,11 @@ export function renderTable(report, options = {}) {
   ].join('')));
   output.push(border(glyph.bl, glyph.br));
   return `${output.join('\n')}\n`;
+}
+
+export function renderTable(report, options = {}) {
+  const requestedWidth = Number(options.width);
+  const width = Math.min(120, Math.max(40, Number.isFinite(requestedWidth) ? requestedWidth : 96));
+  if (options.details && width >= 68) return renderDetailedTable(report, options);
+  return renderCompactTable(report, options);
 }

@@ -128,7 +128,7 @@ export async function callCodexAppServer(method, params = {}, dependencies = {})
 
       if (message.id === 2 && requestSent) {
         if (message.error) {
-          finish(new SafeError('Codex could not consume the saved reset.'));
+          finish(new SafeError('Codex could not consume the banked reset.'));
           return;
         }
         finish(null, message.result);
@@ -164,7 +164,7 @@ export async function consumeRateLimitReset(options = {}) {
   const result = await rpcCall('account/rateLimitResetCredit/consume', params);
   const outcome = result?.outcome;
   if (!REDEMPTION_OUTCOMES.has(outcome)) {
-    throw new SafeError('Codex returned an unknown saved-reset result.');
+    throw new SafeError('Codex returned an unknown banked-reset result.');
   }
   return { outcome };
 }
@@ -211,7 +211,7 @@ export async function offerRedemption(report, options = {}, dependencies = {}) {
   const approved = await ask();
   if (!approved) {
     if (key) dismissedKeys.add(key);
-    output.write('Saved reset not used.\n');
+    output.write('Banked reset not used.\n');
     return { status: 'declined', creditKey: key };
   }
 
@@ -219,7 +219,7 @@ export async function offerRedemption(report, options = {}, dependencies = {}) {
   const { outcome } = await consume({ creditId: report.nextSavedReset.id });
   if (outcome === 'reset' || outcome === 'alreadyRedeemed') {
     output.write(outcome === 'reset'
-      ? 'Saved reset used. Refreshing account limits...\n'
+      ? 'Banked reset used. Refreshing account limits...\n'
       : 'This reset was already used successfully. Refreshing account limits...\n');
     return { status: 'consumed', outcome, creditKey: key };
   }

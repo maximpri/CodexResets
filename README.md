@@ -1,6 +1,6 @@
 # CodexResets
 
-CodexResets is a safe-by-default CLI and Codex plugin for checking exactly when your Codex usage windows reset. It leads with the five-hour and weekly limits, shows remaining capacity, and keeps natural usage resets separate from banked full-reset expiry dates and purchased credits. When a banked reset is actually due, an interactive session can ask for permission and use it only after explicit approval.
+CodexResets is a safe-by-default CLI and Codex plugin for checking exactly when your Codex usage windows reset. It leads with the five-hour and weekly limits, shows remaining capacity, and keeps natural usage resets separate from banked-reset expiry dates and purchased credits. When a banked reset is actually due, an interactive session can ask for permission and use it only after explicit approval.
 
 > [!IMPORTANT]
 > CodexResets is an independent community project, not an official OpenAI product. It uses undocumented ChatGPT endpoints that may change. Use `/usage` in the Codex TUI for the supported OpenAI experience.
@@ -9,17 +9,29 @@ CodexResets is a safe-by-default CLI and Codex plugin for checking exactly when 
 
 - The exact next five-hour and weekly limit reset dates in your selected time zone
 - Remaining capacity, reset countdowns, pace confidence, and clear `ON TRACK` or `AT RISK` labels
-- A decision-first recommendation to use, keep, or skip the next banked reset
-- A chronological milestone list for natural resets, projected depletion, recommendations, and banked-reset expiry
-- Banked full resets ordered by expiry, with the next decision-relevant reset highlighted
+- A concise next step whose wording reflects the forecast confidence
+- The next banked-reset expiry and number of banked resets available
+- An optional detailed view with chronological milestones, forecast methodology, and every banked reset
 
 Normal reports never consume a banked reset, purchase usage credits, or change auto-reload settings. A due reset can be consumed only from an interactive table session after the user types the full word `yes` at the irreversible-action prompt.
 
-## Snapshots
+## Example
 
-![CodexResets terminal report showing the weekly reset milestone](docs/images/codexresets-terminal.png)
+The compact report keeps the natural usage reset and banked-reset expiry visibly separate:
 
-The terminal snapshot puts `WEEKLY LIMIT RESETS` on its own milestone. The banked-reset expiry above it is a different event and does not change the weekly usage window.
+```text
+PLAN TO RECHECK
+Next      Recheck Friday morning; redeem only if the reset value is worthwhile.
+
+Weekly    74% used • 26% left
+          resets Thu, Jul 23, 12:15 AM EDT • AT RISK
+Forecast  Weekly capacity may run out Fri, Jul 17, 10:57 AM EDT • HIGH
+Banked    expires Fri, Jul 17, 8:26 PM EDT • 1 available
+
+Details   codexresets --details
+```
+
+The weekly limit resets on July 23. The July 17 banked-reset expiry is a different event and does not change the weekly usage window.
 
 <details>
 <summary>Compare with Codex Analytics</summary>
@@ -38,7 +50,7 @@ These values come from different account features and should not be compared wit
 | --- | --- | --- |
 | `WEEKLY LIMIT RESETS` | The natural reset of the weekly plan-usage window | Codex Analytics → **Weekly usage limit** → **Resets** |
 | `5-HOUR LIMIT RESETS` | The natural reset of the rolling five-hour window | The corresponding five-hour usage display |
-| `NEXT SAVED RESET EXPIRES` | The deadline to redeem a banked full-reset coupon | The banked reset shown by Codex `/usage` |
+| `NEXT BANKED RESET EXPIRES` | The deadline to redeem a banked reset | The banked reset shown by Codex `/usage` |
 | `Credits remaining` in Codex Analytics | Purchased or auto-reload usage credits | The Analytics credit balance; CodexResets does not fetch it |
 
 When checking a weekly reset discrepancy, compare only the Analytics weekly-reset date with `weekly_usage.resets_at` in JSON or `WEEKLY LIMIT RESETS` in the table.
@@ -103,30 +115,31 @@ The plugin runs the same checker and reports `weekly_usage.resets_at` first for 
 
 ## Use
 
-Run the full terminal report:
+Run the terminal summary:
 
 ```bash
 codexresets
 ```
 
-The table is ordered for quick decisions:
+The default table is intentionally brief. It shows the next step, weekly and five-hour capacity, any projected depletion, and the next banked-reset expiry. Forecasts that are not yet reliable say `NO ACTION NOW` and ask you to recheck instead of presenting a precise redemption time.
 
-1. **Decision** states what to do, when to do it, the expected reset value, and the credit deadline.
-2. **Key milestones** puts the recommendation, limit resets, projected depletion, and next expiry on one timeline. `◆` marks the recommended action, `!` marks a risk or deadline, and `●` marks an informational checkpoint.
-3. **Limit status** summarizes whether each active usage window should last until its natural reset.
-4. **Saved resets** lists available credits by expiry and marks the next one as `NEXT`.
+Use `--details` for the full diagnostic table:
 
-Times are shown in the selected local time zone. Relative durations such as `IN 3h 34m` make the next event easy to compare; use `--timezone` when planning in another location.
+```bash
+codexresets --details
+```
+
+The detailed view adds the chronological milestone timeline, pace methodology, expected reset value, and every banked reset. `◆` marks the recommended action, `!` marks a risk or deadline, and `●` marks an informational checkpoint. Times are shown in the selected local time zone; use `--timezone` when planning in another location.
 
 ### Interpret a reset recommendation
 
-A future `USE A SAVED RESET IN ...` message is a forecast of when usage may reach the 95% target if the measured pace continues. It is not an instruction to consume a reset now. Check the confidence shown beside the constraining usage window:
+A future `USE A BANKED RESET IN ...` message in the detailed view is a forecast of when usage may reach the 95% target if the measured pace continues. It is not an instruction to consume a reset now. The default brief view converts that forecast into a safer `PLAN TO RECHECK` or `NO ACTION NOW` next step.
 
-- `LOW` confidence commonly appears near the start of a window, when a small amount of early usage is being extrapolated across several days. Keep the saved reset and recheck instead of scheduling redemption from that estimate alone.
+- `LOW` confidence commonly appears near the start of a window, when a small amount of early usage is being extrapolated across several days. Keep the banked reset and recheck instead of scheduling redemption from that estimate alone.
 - `MEDIUM` and `HIGH` confidence reflect more observation, but the recommendation is still an estimate and should be checked against current usage when it becomes due.
 - `--record` gives later reports useful historical samples, while `--watch 15m --record` can keep checking as the projection changes.
 
-Also compare the recommendation with `WEEKLY LIMIT RESETS`. If the projected 95% point occurs shortly before the natural weekly reset, using a saved reset is useful only when uninterrupted capacity during that gap matters to you. When the saved reset remains valid after the natural reset, you can instead keep it, let the weekly window reset naturally, and reassess before the saved reset expires. The CLI cannot decide that personal tradeoff from percentages alone.
+Also compare the recommendation with `WEEKLY LIMIT RESETS`. If the projected 95% point occurs shortly before the natural weekly reset, using a banked reset is useful only when uninterrupted capacity during that gap matters to you. When the banked reset remains valid after the natural reset, you can instead keep it, let the weekly window reset naturally, and reassess before the banked reset expires. The CLI cannot decide that personal tradeoff from percentages alone.
 
 For an exact weekly reset value suitable for scripts, request JSON and read `weekly_usage.resets_at`:
 
@@ -160,6 +173,7 @@ Common examples:
 
 ```bash
 codexresets --timezone Europe/London
+codexresets --details
 codexresets --format json
 codexresets --record
 codexresets --watch 15m --record
@@ -171,6 +185,7 @@ Useful options:
 | Option | Purpose |
 | --- | --- |
 | `--timezone <name>` | Display dates in an IANA time zone such as `UTC`. |
+| `--details` | Show the full milestone timeline, forecast methodology, and banked-reset inventory. |
 | `--format <type>` | Choose `table` or `json` output. |
 | `--record` | Save a sanitized usage snapshot for better forecasts. |
 | `--history` | Show a summary of saved usage history. |
@@ -182,7 +197,7 @@ Useful options:
 | `--ascii` | Use ASCII borders if box-drawing characters display poorly. |
 | `--help` | Show every option. |
 
-Credit IDs are hidden unless `--show-ids` is explicitly enabled.
+Credit IDs are hidden unless `--show-ids` is explicitly enabled. In table output, `--show-ids` also enables the detailed view.
 
 ## Usage history
 
@@ -220,7 +235,7 @@ See [SECURITY.md](SECURITY.md) for security details and private vulnerability re
 
 **Borders or colors look wrong:** Run `codexresets --ascii --color never`.
 
-**Weekly reset appears not to match Analytics:** Compare `WEEKLY LIMIT RESETS` with the reset date inside the **Weekly usage limit** card. Do not compare it with `NEXT SAVED RESET EXPIRES` or `Credits remaining`. Remember that `00:15` and `12:15 AM` are the same time.
+**Weekly reset appears not to match Analytics:** Compare `WEEKLY LIMIT RESETS` with the reset date inside the **Weekly usage limit** card. Do not compare it with `NEXT BANKED RESET EXPIRES` or `Credits remaining`. Remember that `00:15` and `12:15 AM` are the same time.
 
 **Service format changed:** The endpoints are undocumented. Open an issue with sanitized output only—never attach credentials or a raw account response.
 

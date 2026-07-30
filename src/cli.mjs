@@ -19,37 +19,74 @@ import {
   summarizeHistory,
 } from './history.mjs';
 import { offerRedemption } from './redemption.mjs';
-import { normalizeReport, renderJson, renderTable, validateTimeZone } from './report.mjs';
+import {
+  formatDuration,
+  normalizeReport,
+  renderJson,
+  renderTable,
+  validateTimeZone,
+} from './report.mjs';
 
 const packagePath = fileURLToPath(new URL('../package.json', import.meta.url));
+const knownOptions = [
+  '--timezone',
+  '--auth-file',
+  '--format',
+  '--color',
+  '--width',
+  '--details',
+  '--show-ids',
+  '--ascii',
+  '--input',
+  '--now',
+  '--record',
+  '--history',
+  '--forget-history',
+  '--history-file',
+  '--watch',
+  '--notify',
+  '--no-redeem-prompt',
+  '--help',
+  '--version',
+];
 
 function usage() {
   return `CodexResets
 
 Usage:
   codexresets [options]
-  ./codexresets.sh [options]
 
-Options:
+Common:
   --timezone <IANA name>   Display time zone (default: system time zone)
-  --auth-file <path>       Codex auth.json location (redemption disabled)
+  --details                Show milestones, forecast methodology, and all resets
+  --record                 Save a sanitized snapshot to improve later forecasts
+  --watch <duration>       Recheck every 1m to 24h; print material changes
+  --notify                 Ring the terminal bell when watched output changes
+  --no-redeem-prompt       Never offer to consume a due banked reset
+
+Output and automation:
   --format <table|json>    Output format (default: table)
   --color <auto|always|never>
                            ANSI color mode (default: auto)
-  --width <68-120>         Report width (default: terminal width, up to 96)
-  --show-ids               Include credit IDs (hidden by default)
+  --width <40-120>         Report width (default: terminal width, up to 96)
+  --show-ids               Show IDs and imply --details (hidden by default)
   --ascii                  Use ASCII borders
   --input <path|->         Render saved JSON without accessing credentials
   --now <ISO timestamp>    Override report time (useful for snapshots)
-  --record                 Save a sanitized usage snapshot for better forecasts
+
+History and advanced:
   --history                Show the sanitized local history summary and exit
   --forget-history         Delete locally recorded usage history and exit
   --history-file <path>    Alternative sanitized history file
-  --watch <duration>        Poll every 1m to 24h; print material changes
-  --notify                 Ring the terminal bell when watch output changes
-  --no-redeem-prompt       Never offer to consume a due banked reset
+  --auth-file <path>       Codex auth.json location (redemption disabled)
   -h, --help               Show this help
   -v, --version            Show the version
+
+Examples:
+  codexresets
+  codexresets --details
+  codexresets --watch 15m --record
+  codexresets --format json
 
 Environment:
   CODEX_AUTH_FILE          Alternative auth.json location
@@ -57,6 +94,34 @@ Environment:
   CODEX_HOME               Codex home directory (default: ~/.codex)
   NO_COLOR                 Disable ANSI colors
 `;
+}
+
+function optionDistance(left, right) {
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let leftIndex = 0; leftIndex < left.length; leftIndex += 1) {
+    const current = [leftIndex + 1];
+    for (let rightIndex = 0; rightIndex < right.length; rightIndex += 1) {
+      current.push(Math.min(
+        current[rightIndex] + 1,
+        previous[rightIndex + 1] + 1,
+        previous[rightIndex] + (left[leftIndex] === right[rightIndex] ? 0 : 1),
+      ));
+    }
+    previous.splice(0, previous.length, ...current);
+  }
+  return previous.at(-1);
+}
+
+function unknownOptionMessage(argument) {
+  const option = String(argument);
+  if (!option.startsWith('--')) return `Unknown option: ${option}`;
+  const nearest = knownOptions
+    .map((candidate) => ({ candidate, distance: optionDistance(option, candidate) }))
+    .sort((left, right) => left.distance - right.distance)[0];
+  const threshold = Math.max(2, Math.floor(option.length / 3));
+  return nearest && nearest.distance <= threshold
+    ? `Unknown option: ${option}. Did you mean ${nearest.candidate}?`
+    : `Unknown option: ${option}`;
 }
 
 function requireValue(arguments_, index, option) {
@@ -84,7 +149,7 @@ export function parseArguments(arguments_) {
   const codexHome = process.env.CODEX_HOME || join(homedir(), '.codex');
   const defaultAuthFile = join(codexHome, 'auth.json');
   const defaultWidth = Number.isFinite(detectedColumns)
-    ? Math.min(96, Math.max(68, detectedColumns))
+    ? Math.min(96, Math.max(40, detectedColumns))
     : 96;
   const options = {
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
@@ -95,6 +160,7 @@ export function parseArguments(arguments_) {
     format: 'table',
     colorMode: String(process.env.COLOR_MODE || 'auto').toLowerCase(),
     width: defaultWidth,
+    details: false,
     showIds: false,
     ascii: false,
     input: null,
@@ -139,6 +205,9 @@ export function parseArguments(arguments_) {
         options.width = Number.parseInt(requireValue(arguments_, index, argument), 10);
         index += 1;
         break;
+      case '--details':
+        options.details = true;
+        break;
       case '--input':
         options.input = requireValue(arguments_, index, argument);
         index += 1;
@@ -175,6 +244,7 @@ export function parseArguments(arguments_) {
         break;
       case '--show-ids':
         options.showIds = true;
+        options.details = true;
         break;
       case '--ascii':
         options.ascii = true;
@@ -188,7 +258,7 @@ export function parseArguments(arguments_) {
         options.version = true;
         break;
       default:
-        throw new SafeError(`Unknown option: ${argument}`);
+        throw new SafeError(unknownOptionMessage(argument));
     }
   }
 
@@ -198,8 +268,8 @@ export function parseArguments(arguments_) {
   if (!['auto', 'always', 'never'].includes(options.colorMode)) {
     throw new SafeError('--color must be auto, always, or never.');
   }
-  if (!Number.isFinite(options.width) || options.width < 68 || options.width > 120) {
-    throw new SafeError('--width must be between 68 and 120.');
+  if (!Number.isFinite(options.width) || options.width < 40 || options.width > 120) {
+    throw new SafeError('--width must be between 40 and 120.');
   }
   if (!Number.isFinite(options.now.getTime())) throw new SafeError('--now must be a valid timestamp.');
   if (!options.historyFileExplicit && resolve(options.authFile) !== resolve(defaultAuthFile)) {
@@ -417,6 +487,13 @@ export async function watchReports(options, dependencies = {}) {
   let completedIterations = 0;
   let consecutiveFailures = 0;
   let attempts = 0;
+
+  if (stderr.isTTY) {
+    stderr.write(
+      `Watching every ${formatDuration(options.watchMs)}; only material changes will print. `
+      + `Next check in ${formatDuration(options.watchMs)}. Press Ctrl+C to stop.\n`,
+    );
+  }
 
   while (attempts < maximumIterations) {
     attempts += 1;

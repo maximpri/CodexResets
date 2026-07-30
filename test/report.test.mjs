@@ -310,24 +310,31 @@ test('terminal output neutralizes control and direction-changing characters', ()
     }],
   };
   const report = normalizeReport(unsafe, { now, timeZone: 'UTC' });
-  const output = renderTable(report, { color: false, width: 72, showIds: true });
+  const output = renderTable(report, {
+    color: false,
+    width: 72,
+    showIds: true,
+    details: true,
+  });
   assert.doesNotMatch(output, /\u001b|\u202e/);
-  assert.match(output, /Safe title/);
+  assert.match(output, /Banked reset/);
+  assert.match(output, /ID …BAD/);
 });
 
 test('table output leads with the decision and highlights chronological milestones', () => {
   const report = normalizeReport(fixture, { now, timeZone: 'UTC' });
-  const output = renderTable(report, { color: false, width: 96 });
+  const output = renderTable(report, { color: false, width: 96, details: true });
   assert.doesNotMatch(output, /example0000000/);
   assert.doesNotMatch(output, /total earned/i);
   assert.doesNotMatch(output, /█|░/);
   assert.match(output, /20% used/);
   assert.match(output, /DECISION/);
-  assert.match(output, /USE A SAVED RESET IN 3d 17h 23m/);
+  assert.match(output, /USE A BANKED RESET IN 3d 17h 23m/);
   assert.match(output, /KEY MILESTONES/);
-  assert.match(output, /USE SAVED RESET/);
-  assert.match(output, /NEXT SAVED RESET EXPIRES/);
+  assert.match(output, /USE BANKED RESET/);
+  assert.match(output, /NEXT BANKED RESET EXPIRES/);
   assert.match(output, /WEEKLY CAPACITY RUNS OUT/);
+  assert.doesNotMatch(output, /NOW \/ REPORT CHECKED/);
   assert.match(output, /LIMIT STATUS/);
   assert.match(output, /AT RISK/);
   assert.match(output, /points\/hour/);
@@ -335,15 +342,39 @@ test('table output leads with the decision and highlights chronological mileston
   assert.match(output, /NEAR LIMIT/);
   assert.match(output, /EXPECTED RESET VALUE/);
   assert.match(output, /weekly 95 points/);
-  assert.match(output, /SAVED RESETS/);
+  assert.match(output, /BANKED RESETS/);
   assert.match(output, /3 AVAILABLE/);
-  assert.match(output, /credit expires in 3d 21h 1m/);
+  assert.match(output, /banked reset expires in 3d 21h 1m/);
 });
 
 test('every uncolored table line has the requested width', () => {
   const report = normalizeReport(fixture, { now, timeZone: 'UTC' });
-  const output = renderTable(report, { color: false, width: 72 });
+  const output = renderTable(report, { color: false, width: 72, details: true });
   for (const line of output.trimEnd().split('\n')) assert.equal([...line].length, 72, line);
+});
+
+test('compact output is confidence-aware and omits diagnostic sections', () => {
+  const report = normalizeReport(fixture, {
+    now: new Date('2026-01-15T12:00:00Z'),
+    timeZone: 'UTC',
+  });
+  const output = renderTable(report, { color: false, width: 80 });
+  assert.match(output, /NO ACTION NOW/);
+  assert.match(output, /this forecast is low/);
+  assert.match(output, /confidence/);
+  assert.match(output, /Banked/);
+  assert.match(output, /codexresets --details/);
+  assert.doesNotMatch(output, /USE A BANKED RESET IN 183d/);
+  assert.doesNotMatch(output, /KEY MILESTONES/);
+});
+
+test('compact output stays within forty columns without borders', () => {
+  const report = normalizeReport(fixture, { now, timeZone: 'UTC' });
+  const output = renderTable(report, { color: false, width: 40 });
+  assert.doesNotMatch(output, /[╭╮╰╯]/);
+  for (const line of output.trimEnd().split('\n')) {
+    assert.ok([...line].length <= 40, line);
+  }
 });
 
 test('JSON output is normalized and private by default', () => {

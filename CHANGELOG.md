@@ -19,8 +19,8 @@ All notable changes to this project will be documented here. The format follows 
 - Weekly usage percentage, remaining capacity, and natural reset timing.
 - Five-hour usage reporting and short-window constraint analysis.
 - Day/night-weighted depletion estimates with confidence labels and timezone-aware peak usage.
-- Smart full-reset timing that accounts for whichever five-hour or weekly window reaches the 95% target first, plus saved-reset expiry and projected recovery value.
-- Normalized five-hour usage, weekly usage, recommendation, and next-saved-reset fields in JSON output.
+- Smart banked-reset timing that accounts for whichever five-hour or weekly window reaches the 95% target first, plus banked-reset expiry and projected recovery value.
+- Normalized five-hour usage, weekly usage, recommendation, and next-banked-reset data in JSON output.
 - Opt-in sanitized usage history with 15-minute coalescing, 90-day retention, metadata-only inspection, and explicit deletion.
 - Recorded-delta forecasts for both five-hour and weekly windows, with safe fallback to the day/night-weighted elapsed-window average.
 - Sequential watch mode with material-change filtering, bounded retry backoff, and opt-in terminal-bell notifications.
@@ -28,7 +28,9 @@ All notable changes to this project will be documented here. The format follows 
 
 ### Changed
 
-- Redesigned the terminal report as a decision-first reset control view, with the recommended action and deadline first, a chronological milestone timeline, explicit limit risk states, and a compact saved-reset inventory.
+- Made the concise, confidence-aware summary the default table and moved the milestone timeline, forecast methodology, and full banked-reset inventory behind `--details`.
+- Added a borderless layout for 40–67-column terminals, grouped help with examples, typo suggestions for long options, and a visible watch-mode status line.
+- Standardized user-facing terminology on “banked reset,” removed the redundant checked-time milestone, and fixed repeated bullets on wrapped detail lines.
 - Clarified that low-confidence future reset recommendations are provisional forecasts and documented the option to wait for a nearby natural weekly reset when uninterrupted capacity is unnecessary.
 - Renamed the project to CodexResets, with `codexresets` as the primary package and command name. The previous command remains available as a compatibility alias.
 - Renamed the default local history file to `codexresets-history.json`, with validated one-time migration from the previous filename.

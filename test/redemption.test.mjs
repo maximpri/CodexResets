@@ -112,7 +112,7 @@ test('declining leaves the reset untouched and suppresses repeat watch prompts',
   assert.equal(second.status, 'not_offered');
   assert.equal(consumeCalls, 0);
   assert.match(output, /permanent and cannot be undone/);
-  assert.match(output, /Saved reset not used/);
+  assert.match(output, /Banked reset not used/);
 });
 
 test('approval consumes the selected reset and reports success', async () => {
@@ -134,7 +134,7 @@ test('approval consumes the selected reset and reports success', async () => {
     outcome: 'reset',
     creditKey: 'RateLimitResetCredit_synthetic0001',
   });
-  assert.match(output, /Saved reset used/);
+  assert.match(output, /Banked reset used/);
 });
 
 test('redemption sends an idempotency key and the selected opaque credit ID', async () => {
@@ -162,7 +162,7 @@ test('rejects unknown app-server outcomes without exposing response details', as
     consumeRateLimitReset({
       rpcCall: async () => ({ outcome: 'syntheticUnexpected', private: 'do-not-print' }),
     }),
-    (error) => /unknown saved-reset result/.test(error.message)
+    (error) => /unknown banked-reset result/.test(error.message)
       && !error.message.includes('do-not-print'),
   );
 });

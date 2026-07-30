@@ -14,6 +14,7 @@ test('uses CodexResets as the public CLI name', () => {
   const output = execFileSync(process.execPath, [cli.pathname, '--help'], { encoding: 'utf8' });
   assert.match(output, /^CodexResets$/m);
   assert.match(output, /^  codexresets \[options\]$/m);
+  assert.match(output, /--details/);
   assert.match(output, /--no-redeem-prompt/);
 });
 
@@ -28,16 +29,36 @@ test('renders an offline fixture without credentials', () => {
   ], { encoding: 'utf8' });
 
   assert.match(output, /CODEXRESETS/);
-  assert.match(output, /DECISION/);
-  assert.match(output, /USE A SAVED RESET IN/);
-  assert.match(output, /KEY MILESTONES/);
-  assert.match(output, /USE SAVED RESET/);
-  assert.match(output, /LIMIT STATUS/);
-  assert.match(output, /WEEKLY CAPACITY RUNS OUT/);
+  assert.match(output, /PLAN TO RECHECK/);
+  assert.match(output, /redeem only if usage is/);
+  assert.match(output, /still near its limit/);
+  assert.match(output, /Forecast/);
+  assert.match(output, /Weekly capacity may run out/);
   assert.match(output, /20% used/);
-  assert.match(output, /SAVED RESETS/);
-  assert.match(output, /3 AVAILABLE/);
+  assert.match(output, /Banked/);
+  assert.match(output, /3 available/);
+  assert.match(output, /codexresets --details/);
+  assert.doesNotMatch(output, /KEY MILESTONES/);
   assert.doesNotMatch(output, /example0000000/);
+});
+
+test('renders the full diagnostic table only when details are requested', () => {
+  const output = execFileSync(process.execPath, [
+    cli.pathname,
+    '--input', fixture.pathname,
+    '--now', '2026-07-13T23:25:36Z',
+    '--timezone', 'UTC',
+    '--color', 'never',
+    '--width', '80',
+    '--details',
+  ], { encoding: 'utf8' });
+
+  assert.match(output, /DECISION/);
+  assert.match(output, /USE A BANKED RESET IN/);
+  assert.match(output, /KEY MILESTONES/);
+  assert.match(output, /LIMIT STATUS/);
+  assert.match(output, /BANKED RESETS/);
+  assert.match(output, /3 AVAILABLE/);
 });
 
 test('runs through an npm-style executable symlink', {
@@ -51,7 +72,7 @@ test('runs through an npm-style executable symlink', {
   assert.equal(output, '1.0.0\n');
 });
 
-test('uses the minimum layout width in a narrow terminal', () => {
+test('uses a borderless responsive layout in a narrow terminal', () => {
   const output = execFileSync(process.execPath, [
     cli.pathname,
     '--input', fixture.pathname,
@@ -63,7 +84,11 @@ test('uses the minimum layout width in a narrow terminal', () => {
     env: { ...process.env, COLUMNS: '40' },
   });
 
-  assert.equal([...output.split('\n')[0]].length, 68);
+  assert.match(output, /^CODEXRESETS$/m);
+  assert.doesNotMatch(output, /[╭╮╰╯]/);
+  for (const line of output.trimEnd().split('\n')) {
+    assert.ok([...line].length <= 40, line);
+  }
 });
 
 test('fails clearly when the service shape is not recognized', () => {
@@ -103,6 +128,10 @@ test('validates safe watch intervals and incompatible options', () => {
     /must be different/,
   );
   assert.equal(parseArguments(['--no-redeem-prompt']).redeemPrompt, false);
+  assert.equal(parseArguments(['--details']).details, true);
+  assert.equal(parseArguments(['--show-ids']).details, true);
+  assert.equal(parseArguments(['--width', '40']).width, 40);
+  assert.throws(() => parseArguments(['--width', '39']), /between 40 and 120/);
   assert.equal(parseArguments(['--auth-file', '/tmp/custom-auth.json']).authFileExplicit, true);
 });
 
@@ -126,6 +155,7 @@ test('offline fixtures ignore ambient recorded history', () => {
     '--now', '2026-07-13T23:25:36Z',
     '--timezone', 'UTC',
     '--color', 'never',
+    '--details',
   ], {
     encoding: 'utf8',
     env: {
@@ -259,6 +289,20 @@ test('watch mode emits only material changes and notifies on stderr', async () =
   assert.deepEqual(waits, [60_000, 60_000]);
 });
 
+test('watch mode explains its quiet behavior in an interactive terminal', async () => {
+  let stderr = '';
+  await watchReports({ watchMs: 15 * 60_000, notify: false }, {
+    buildReport: async () => watchReport('WAIT_FOR_WEEKLY_RESET'),
+    renderReport: () => 'BASELINE\n',
+    stdout: { isTTY: true, write: () => {} },
+    stderr: { isTTY: true, write: (value) => { stderr += value; } },
+    maximumIterations: 1,
+  });
+  assert.match(stderr, /Watching every 15m/);
+  assert.match(stderr, /only material changes will print/);
+  assert.match(stderr, /Press Ctrl\+C to stop/);
+});
+
 test('watch mode refreshes and renders account limits after a consumed reset', async () => {
   const reports = [
     watchReport('USE_NOW', '2026-07-14T00:00:00Z'),
@@ -350,6 +394,19 @@ test('CLI errors neutralize terminal control characters', () => {
   }), (error) => {
     assert.doesNotMatch(error.stderr, /\u001b/);
     assert.match(error.stderr, /Unknown option/);
+    return true;
+  });
+});
+
+test('CLI errors suggest the nearest known long option', () => {
+  assert.throws(() => execFileSync(process.execPath, [
+    cli.pathname,
+    '--watc', '5m',
+  ], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }), (error) => {
+    assert.match(error.stderr, /Did you mean --watch\?/);
     return true;
   });
 });
