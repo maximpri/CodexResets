@@ -34,6 +34,7 @@ const knownOptions = [
   '--format',
   '--color',
   '--width',
+  '--brief',
   '--details',
   '--show-ids',
   '--ascii',
@@ -58,7 +59,7 @@ Usage:
 
 Common:
   --timezone <IANA name>   Display time zone (default: system time zone)
-  --details                Show milestones, forecast methodology, and all resets
+  --brief                  Show a shorter summary (automatic below 68 columns)
   --record                 Save a sanitized snapshot to improve later forecasts
   --watch <duration>       Recheck every 1m to 24h; print material changes
   --notify                 Ring the terminal bell when watched output changes
@@ -69,7 +70,7 @@ Output and automation:
   --color <auto|always|never>
                            ANSI color mode (default: auto)
   --width <40-120>         Report width (default: terminal width, up to 96)
-  --show-ids               Show IDs and imply --details (hidden by default)
+  --show-ids               Include banked-reset IDs (hidden by default)
   --ascii                  Use ASCII borders
   --input <path|->         Render saved JSON without accessing credentials
   --now <ISO timestamp>    Override report time (useful for snapshots)
@@ -84,7 +85,7 @@ History and advanced:
 
 Examples:
   codexresets
-  codexresets --details
+  codexresets --brief
   codexresets --watch 15m --record
   codexresets --format json
 
@@ -160,6 +161,7 @@ export function parseArguments(arguments_) {
     format: 'table',
     colorMode: String(process.env.COLOR_MODE || 'auto').toLowerCase(),
     width: defaultWidth,
+    brief: false,
     details: false,
     showIds: false,
     ascii: false,
@@ -206,7 +208,12 @@ export function parseArguments(arguments_) {
         index += 1;
         break;
       case '--details':
+        options.brief = false;
         options.details = true;
+        break;
+      case '--brief':
+        options.brief = true;
+        options.details = false;
         break;
       case '--input':
         options.input = requireValue(arguments_, index, argument);
@@ -244,6 +251,7 @@ export function parseArguments(arguments_) {
         break;
       case '--show-ids':
         options.showIds = true;
+        options.brief = false;
         options.details = true;
         break;
       case '--ascii':

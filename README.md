@@ -17,7 +17,7 @@ Normal reports never consume a banked reset, purchase usage credits, or change a
 
 ## Example
 
-The compact report keeps the natural usage reset and banked-reset expiry visibly separate:
+The optional `--brief` report keeps the natural usage reset and banked-reset expiry visibly separate:
 
 ```text
 PLAN TO RECHECK
@@ -28,7 +28,7 @@ Weekly    74% used • 26% left
 Forecast  Weekly capacity may run out Fri, Jul 17, 10:57 AM EDT • HIGH
 Banked    expires Fri, Jul 17, 8:26 PM EDT • 1 available
 
-Details   codexresets --details
+Full      rerun without --brief
 ```
 
 The weekly limit resets on July 23. The July 17 banked-reset expiry is a different event and does not change the weekly usage window.
@@ -115,25 +115,25 @@ The plugin runs the same checker and reports `weekly_usage.resets_at` first for 
 
 ## Use
 
-Run the terminal summary:
+Run the full terminal report:
 
 ```bash
 codexresets
 ```
 
-The default table is intentionally brief. It shows the next step, weekly and five-hour capacity, any projected depletion, and the next banked-reset expiry. Forecasts that are not yet reliable say `NO ACTION NOW` and ask you to recheck instead of presenting a precise redemption time.
+The default table is information-rich. It shows the decision and expected reset value, a chronological milestone timeline, exact reset dates and countdowns, pace methodology and confidence, limit risk states, and the complete banked-reset inventory.
 
-Use `--details` for the full diagnostic table:
+Use `--brief` when you only want the next step, usage-window status, projected depletion, and next banked-reset expiry:
 
 ```bash
-codexresets --details
+codexresets --brief
 ```
 
-The detailed view adds the chronological milestone timeline, pace methodology, expected reset value, and every banked reset. `◆` marks the recommended action, `!` marks a risk or deadline, and `●` marks an informational checkpoint. Times are shown in the selected local time zone; use `--timezone` when planning in another location.
+The brief layout is also selected automatically on terminals narrower than 68 columns. In the full report, `◆` marks the recommended action, `!` marks a risk or deadline, and `●` marks an informational checkpoint. Times are shown in the selected local time zone; use `--timezone` when planning in another location.
 
 ### Interpret a reset recommendation
 
-A future `USE A BANKED RESET IN ...` message in the detailed view is a forecast of when usage may reach the 95% target if the measured pace continues. It is not an instruction to consume a reset now. The default brief view converts that forecast into a safer `PLAN TO RECHECK` or `NO ACTION NOW` next step.
+A future `USE A BANKED RESET IN ...` message is a forecast of when usage may reach the 95% target if the measured pace continues. It is not an instruction to consume a reset now. When confidence is `LOW`, both report modes instead say `NO ACTION NOW` and ask you to recheck closer to the forecast date.
 
 - `LOW` confidence commonly appears near the start of a window, when a small amount of early usage is being extrapolated across several days. Keep the banked reset and recheck instead of scheduling redemption from that estimate alone.
 - `MEDIUM` and `HIGH` confidence reflect more observation, but the recommendation is still an estimate and should be checked against current usage when it becomes due.
@@ -173,7 +173,7 @@ Common examples:
 
 ```bash
 codexresets --timezone Europe/London
-codexresets --details
+codexresets --brief
 codexresets --format json
 codexresets --record
 codexresets --watch 15m --record
@@ -185,7 +185,7 @@ Useful options:
 | Option | Purpose |
 | --- | --- |
 | `--timezone <name>` | Display dates in an IANA time zone such as `UTC`. |
-| `--details` | Show the full milestone timeline, forecast methodology, and banked-reset inventory. |
+| `--brief` | Show a shorter summary instead of the full information-rich report. |
 | `--format <type>` | Choose `table` or `json` output. |
 | `--record` | Save a sanitized usage snapshot for better forecasts. |
 | `--history` | Show a summary of saved usage history. |
@@ -197,7 +197,7 @@ Useful options:
 | `--ascii` | Use ASCII borders if box-drawing characters display poorly. |
 | `--help` | Show every option. |
 
-Credit IDs are hidden unless `--show-ids` is explicitly enabled. In table output, `--show-ids` also enables the detailed view.
+Credit IDs are hidden unless `--show-ids` is explicitly enabled. In table output, `--show-ids` forces the full report.
 
 ## Usage history
 

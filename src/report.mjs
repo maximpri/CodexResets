@@ -939,15 +939,15 @@ function renderCompactTable(report, options = {}) {
 
   if (framed) output.push(separator());
   else pushLine();
-  if (options.details && !framed) {
+  if (!framed && !options.brief) {
     pushWrapped(
-      'Widen the terminal to 68 columns for the detailed table, or use --format json.',
-      labelPrefix('Details'),
+      'Widen the terminal to 68 columns for the full report, or use --format json.',
+      labelPrefix('Full'),
       continuationPrefix,
       'dim',
     );
   } else {
-    pushWrapped('codexresets --details', labelPrefix('Details'), continuationPrefix, 'dim');
+    pushWrapped('rerun without --brief', labelPrefix('Full'), continuationPrefix, 'dim');
   }
   const lowConfidence = [report.weeklyUsage, report.fiveHourUsage]
     .filter(Boolean)
@@ -1052,25 +1052,49 @@ function renderDetailedTable(report, options = {}) {
   ));
   output.push(separator());
   const recommendation = report.recommendation;
-  const recommendationBadge = paint(
-    actionLabel[recommendation.action] ?? recommendation.action,
-    'bold',
-    actionStyle[recommendation.action] ?? 'dim',
-  );
   const recommendationRemaining = recommendation.recommendedAt
     ? recommendation.recommendedAt - report.checkedAt
     : null;
-  const dynamicHeadline = ['USE_NEAR_LIMIT', 'USE_BEFORE_EXPIRY'].includes(recommendation.action)
-    ? recommendationRemaining <= 0
-      ? 'USE A BANKED RESET NOW'
-      : `USE A BANKED RESET IN ${formatDuration(recommendationRemaining)}`
-    : actionHeadline[recommendation.action] ?? recommendation.action;
+  const lowConfidenceFuture = ['USE_NEAR_LIMIT', 'USE_BEFORE_EXPIRY']
+    .includes(recommendation.action)
+    && recommendationRemaining > 0
+    && recommendationUsage(report)?.confidence === 'LOW';
+  const recommendationBadge = paint(
+    lowConfidenceFuture
+      ? 'LOW CONFIDENCE'
+      : actionLabel[recommendation.action] ?? recommendation.action,
+    'bold',
+    lowConfidenceFuture ? 'cyan' : actionStyle[recommendation.action] ?? 'dim',
+  );
+  const dynamicHeadline = lowConfidenceFuture
+    ? 'NO ACTION NOW — RECHECK CLOSER TO THIS DATE'
+    : ['USE_NEAR_LIMIT', 'USE_BEFORE_EXPIRY'].includes(recommendation.action)
+      ? recommendationRemaining <= 0
+        ? 'USE A BANKED RESET NOW'
+        : `USE A BANKED RESET IN ${formatDuration(recommendationRemaining)}`
+      : actionHeadline[recommendation.action] ?? recommendation.action;
   output.push(sides(paint('DECISION', 'bold'), recommendationBadge));
-  output.push(line(paint(dynamicHeadline, 'bold', actionStyle[recommendation.action] ?? 'dim')));
-  output.push(...wrappedLines(recommendation.reason, `${glyph.bullet} `));
+  output.push(line(paint(
+    dynamicHeadline,
+    'bold',
+    lowConfidenceFuture ? 'cyan' : actionStyle[recommendation.action] ?? 'dim',
+  )));
+  output.push(...wrappedLines(
+    lowConfidenceFuture
+      ? 'Current usage suggests a banked reset may become useful near the forecast date.'
+      : recommendation.reason,
+    `${glyph.bullet} `,
+  ));
+  if (lowConfidenceFuture) {
+    output.push(...wrappedLines(
+      'Treat this as a provisional forecast, not a scheduled redemption.',
+      `${glyph.bullet} `,
+      'dim',
+    ));
+  }
   if (recommendation.recommendedAt) {
     output.push(sides(
-      paint('DO THIS', 'dim'),
+      paint(lowConfidenceFuture ? 'RECHECK NEAR' : 'DO THIS', 'dim'),
       paint(formatDate(recommendation.recommendedAt, report.timeZone, { seconds: false }), 'bold'),
     ));
   }
@@ -1124,8 +1148,12 @@ function renderDetailedTable(report, options = {}) {
   if (recommendation.recommendedAt) {
     addMilestone(
       recommendation.recommendedAt,
-      recommendation.action === 'USE_NOW' ? 'USE BANKED RESET NOW' : 'USE BANKED RESET',
-      actionStyle[recommendation.action] ?? 'yellow',
+      lowConfidenceFuture
+        ? 'RECHECK PROVISIONAL FORECAST'
+        : recommendation.action === 'USE_NOW'
+          ? 'USE BANKED RESET NOW'
+          : 'USE BANKED RESET',
+      lowConfidenceFuture ? 'cyan' : actionStyle[recommendation.action] ?? 'yellow',
       'focus',
     );
   }
@@ -1155,6 +1183,14 @@ function renderDetailedTable(report, options = {}) {
     paint('KEY MILESTONES', 'bold'),
     paint(truncate(milestoneContext, milestoneContextWidth), 'dim'),
   ));
+  const milestoneRelativeWidth = Math.min(18, Math.max(
+    13,
+    ...visibleMilestones.map((milestone) => visibleLength(
+      milestone.at <= report.checkedAt
+        ? 'NOW'
+        : `IN ${formatDuration(milestone.at - report.checkedAt)}`,
+    )),
+  ));
   for (const milestone of visibleMilestones) {
     const relative = milestone.at <= report.checkedAt
       ? 'NOW'
@@ -1164,7 +1200,7 @@ function renderDetailedTable(report, options = {}) {
       : milestone.kind === 'risk'
         ? glyph.risk
         : glyph.dot;
-    const leftPrefix = `${paint(marker, 'bold', milestone.tone)} ${fit(relative, 13)} `;
+    const leftPrefix = `${paint(marker, 'bold', milestone.tone)} ${fit(relative, milestoneRelativeWidth)} `;
     const absolute = paint(
       formatDate(milestone.at, report.timeZone, { seconds: false }),
       'dim',
@@ -1271,6 +1307,6 @@ function renderDetailedTable(report, options = {}) {
 export function renderTable(report, options = {}) {
   const requestedWidth = Number(options.width);
   const width = Math.min(120, Math.max(40, Number.isFinite(requestedWidth) ? requestedWidth : 96));
-  if (options.details && width >= 68) return renderDetailedTable(report, options);
+  if (!options.brief && width >= 68) return renderDetailedTable(report, options);
   return renderCompactTable(report, options);
 }

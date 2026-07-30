@@ -14,7 +14,7 @@ test('uses CodexResets as the public CLI name', () => {
   const output = execFileSync(process.execPath, [cli.pathname, '--help'], { encoding: 'utf8' });
   assert.match(output, /^CodexResets$/m);
   assert.match(output, /^  codexresets \[options\]$/m);
-  assert.match(output, /--details/);
+  assert.match(output, /--brief/);
   assert.match(output, /--no-redeem-prompt/);
 });
 
@@ -29,20 +29,16 @@ test('renders an offline fixture without credentials', () => {
   ], { encoding: 'utf8' });
 
   assert.match(output, /CODEXRESETS/);
-  assert.match(output, /PLAN TO RECHECK/);
-  assert.match(output, /redeem only if usage is/);
-  assert.match(output, /still near its limit/);
-  assert.match(output, /Forecast/);
-  assert.match(output, /Weekly capacity may run out/);
-  assert.match(output, /20% used/);
-  assert.match(output, /Banked/);
-  assert.match(output, /3 available/);
-  assert.match(output, /codexresets --details/);
-  assert.doesNotMatch(output, /KEY MILESTONES/);
+  assert.match(output, /DECISION/);
+  assert.match(output, /USE A BANKED RESET IN/);
+  assert.match(output, /KEY MILESTONES/);
+  assert.match(output, /LIMIT STATUS/);
+  assert.match(output, /BANKED RESETS/);
+  assert.match(output, /3 AVAILABLE/);
   assert.doesNotMatch(output, /example0000000/);
 });
 
-test('renders the full diagnostic table only when details are requested', () => {
+test('renders a shorter summary only when brief is requested', () => {
   const output = execFileSync(process.execPath, [
     cli.pathname,
     '--input', fixture.pathname,
@@ -50,15 +46,17 @@ test('renders the full diagnostic table only when details are requested', () => 
     '--timezone', 'UTC',
     '--color', 'never',
     '--width', '80',
-    '--details',
+    '--brief',
   ], { encoding: 'utf8' });
 
-  assert.match(output, /DECISION/);
-  assert.match(output, /USE A BANKED RESET IN/);
-  assert.match(output, /KEY MILESTONES/);
-  assert.match(output, /LIMIT STATUS/);
-  assert.match(output, /BANKED RESETS/);
-  assert.match(output, /3 AVAILABLE/);
+  assert.match(output, /PLAN TO RECHECK/);
+  assert.match(output, /redeem only if usage is/);
+  assert.match(output, /still near its limit/);
+  assert.match(output, /Forecast/);
+  assert.match(output, /Weekly capacity may run out/);
+  assert.match(output, /3 available/);
+  assert.match(output, /rerun without --brief/);
+  assert.doesNotMatch(output, /KEY MILESTONES/);
 });
 
 test('runs through an npm-style executable symlink', {
@@ -128,8 +126,11 @@ test('validates safe watch intervals and incompatible options', () => {
     /must be different/,
   );
   assert.equal(parseArguments(['--no-redeem-prompt']).redeemPrompt, false);
+  assert.equal(parseArguments(['--brief']).brief, true);
   assert.equal(parseArguments(['--details']).details, true);
+  assert.equal(parseArguments(['--details']).brief, false);
   assert.equal(parseArguments(['--show-ids']).details, true);
+  assert.equal(parseArguments(['--show-ids']).brief, false);
   assert.equal(parseArguments(['--width', '40']).width, 40);
   assert.throws(() => parseArguments(['--width', '39']), /between 40 and 120/);
   assert.equal(parseArguments(['--auth-file', '/tmp/custom-auth.json']).authFileExplicit, true);
@@ -155,7 +156,6 @@ test('offline fixtures ignore ambient recorded history', () => {
     '--now', '2026-07-13T23:25:36Z',
     '--timezone', 'UTC',
     '--color', 'never',
-    '--details',
   ], {
     encoding: 'utf8',
     env: {

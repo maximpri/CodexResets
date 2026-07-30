@@ -28,7 +28,7 @@ All notable changes to this project will be documented here. The format follows 
 
 ### Changed
 
-- Made the concise, confidence-aware summary the default table and moved the milestone timeline, forecast methodology, and full banked-reset inventory behind `--details`.
+- Kept the information-rich decision, milestone, pace, confidence, limit-status, and banked-reset report as the default, with a concise `--brief` mode for quick checks.
 - Added a borderless layout for 40–67-column terminals, grouped help with examples, typo suggestions for long options, and a visible watch-mode status line.
 - Standardized user-facing terminology on “banked reset,” removed the redundant checked-time milestone, and fixed repeated bullets on wrapped detail lines.
 - Clarified that low-confidence future reset recommendations are provisional forecasts and documented the option to wait for a nearby natural weekly reset when uninterrupted capacity is unnecessary.

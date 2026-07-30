@@ -353,19 +353,37 @@ test('every uncolored table line has the requested width', () => {
   for (const line of output.trimEnd().split('\n')) assert.equal([...line].length, 72, line);
 });
 
-test('compact output is confidence-aware and omits diagnostic sections', () => {
+test('brief output is confidence-aware and omits diagnostic sections', () => {
+  const report = normalizeReport(fixture, {
+    now: new Date('2026-01-15T12:00:00Z'),
+    timeZone: 'UTC',
+  });
+  const output = renderTable(report, { color: false, width: 80, brief: true });
+  assert.match(output, /NO ACTION NOW/);
+  assert.match(output, /this forecast is low/);
+  assert.match(output, /confidence/);
+  assert.match(output, /Banked/);
+  assert.match(output, /rerun without --brief/);
+  assert.doesNotMatch(output, /USE A BANKED RESET IN 183d/);
+  assert.doesNotMatch(output, /KEY MILESTONES/);
+});
+
+test('the full report keeps context while softening low-confidence advice', () => {
   const report = normalizeReport(fixture, {
     now: new Date('2026-01-15T12:00:00Z'),
     timeZone: 'UTC',
   });
   const output = renderTable(report, { color: false, width: 80 });
+  assert.match(output, /DECISION/);
+  assert.match(output, /LOW CONFIDENCE/);
   assert.match(output, /NO ACTION NOW/);
-  assert.match(output, /this forecast is low/);
-  assert.match(output, /confidence/);
-  assert.match(output, /Banked/);
-  assert.match(output, /codexresets --details/);
+  assert.match(output, /RECHECK NEAR/);
+  assert.match(output, /provisional forecast/);
+  assert.match(output, /EXPECTED RESET VALUE/);
+  assert.match(output, /KEY MILESTONES/);
+  assert.match(output, /LIMIT STATUS/);
+  assert.match(output, /BANKED RESETS/);
   assert.doesNotMatch(output, /USE A BANKED RESET IN 183d/);
-  assert.doesNotMatch(output, /KEY MILESTONES/);
 });
 
 test('compact output stays within forty columns without borders', () => {
