@@ -1,6 +1,6 @@
 # CodexResets
 
-CodexResets is a safe-by-default CLI and Codex plugin for checking exactly when your Codex usage windows reset. It leads with the five-hour and weekly limits, shows remaining capacity, and keeps natural usage resets separate from banked-reset expiry dates and purchased credits. When a banked reset is actually due, an interactive session can ask for permission and use it only after explicit approval.
+CodexResets is a safe-by-default CLI and Codex plugin for checking exactly when your Codex usage windows reset. It leads with the five-hour and weekly limits, shows remaining capacity, and keeps natural usage resets separate from subscription timing, banked-reset expiry dates, and purchased credits. When a banked reset is actually due, an interactive session can ask for permission and use it only after explicit approval.
 
 > [!IMPORTANT]
 > CodexResets is an independent community project, not an official OpenAI product. It uses undocumented ChatGPT endpoints that may change. Use `/usage` in the Codex TUI for the supported OpenAI experience.
@@ -10,6 +10,7 @@ CodexResets is a safe-by-default CLI and Codex plugin for checking exactly when 
 - The exact next five-hour and weekly limit reset dates in your selected time zone
 - Remaining capacity, reset countdowns, pace confidence, and clear `ON TRACK` or `AT RISK` labels
 - A concise next step whose wording reflects the forecast confidence
+- The current subscription's renewal date or expiry date, when available
 - The next banked-reset expiry and number of banked resets available
 - An optional detailed view with chronological milestones, forecast methodology, and every banked reset
 
@@ -25,13 +26,14 @@ Next      Recheck Friday morning; redeem only if the reset value is worthwhile.
 
 Weekly    74% used • 26% left
           resets Thu, Jul 23, 12:15 AM EDT • AT RISK
+Plan      Pro expires Fri, Jul 17, 10:42 PM EDT (1d 6h 0m)
 Forecast  Weekly capacity may run out Fri, Jul 17, 10:57 AM EDT • HIGH
 Banked    expires Fri, Jul 17, 8:26 PM EDT • 1 available
 
 Full      rerun without --brief
 ```
 
-The weekly limit resets on July 23. The July 17 banked-reset expiry is a different event and does not change the weekly usage window.
+The weekly limit resets on July 23. Subscription access and the banked reset end earlier, so they become the effective planning boundaries without changing the underlying weekly usage-window reset.
 
 <details>
 <summary>Compare with Codex Analytics</summary>
@@ -50,6 +52,8 @@ These values come from different account features and should not be compared wit
 | --- | --- | --- |
 | `WEEKLY LIMIT RESETS` | The natural reset of the weekly plan-usage window | Codex Analytics → **Weekly usage limit** → **Resets** |
 | `5-HOUR LIMIT RESETS` | The natural reset of the rolling five-hour window | The corresponding five-hour usage display |
+| `SUBSCRIPTION EXPIRES` | The end of a non-renewing subscription and the last planning boundary for a banked reset | ChatGPT subscription settings → current access end |
+| `SUBSCRIPTION RENEWS` | The next billing-period boundary for a renewing subscription; it is not treated as an expiry | ChatGPT subscription settings → next renewal |
 | `NEXT BANKED RESET EXPIRES` | The deadline to redeem a banked reset | The banked reset shown by Codex `/usage` |
 | `Credits remaining` in Codex Analytics | Purchased or auto-reload usage credits | The Analytics credit balance; CodexResets does not fetch it |
 
@@ -111,7 +115,7 @@ Use $check-codex-resets to show my weekly usage and reset date.
 Compare my weekly reset with Codex Analytics.
 ```
 
-The plugin runs the same checker and reports `weekly_usage.resets_at` first for weekly-reset questions. It does not substitute a banked-reset expiry date when weekly usage is unavailable. A `LOW`-confidence recommendation is a provisional forecast, not a reason by itself to schedule a banked reset; the plugin should identify the natural reset and advise checking again closer to the projected limit. When a recommendation becomes due, the skill must show the confirmation prompt to the user and must not submit `yes` until the user explicitly approves using one banked reset.
+The plugin runs the same checker and reports `weekly_usage.resets_at` first for weekly-reset questions. It does not substitute a subscription or banked-reset expiry date when weekly usage is unavailable. A `LOW`-confidence recommendation is a provisional forecast, not a reason by itself to schedule a banked reset; the plugin should identify the natural reset and advise checking again closer to the projected limit. When a recommendation becomes due, the skill must show the confirmation prompt to the user and must not submit `yes` until the user explicitly approves using one banked reset.
 
 ## Use
 
@@ -121,9 +125,9 @@ Run the full terminal report:
 codexresets
 ```
 
-The default table is information-rich. It shows the decision and expected reset value, a chronological milestone timeline, exact reset dates and countdowns, pace methodology and confidence, limit risk states, and the complete banked-reset inventory.
+The default table is information-rich. It shows the decision and expected reset value, a chronological milestone timeline, subscription timing, exact reset dates and countdowns, pace methodology and confidence, limit risk states, and the complete banked-reset inventory.
 
-Use `--brief` when you only want the next step, usage-window status, projected depletion, and next banked-reset expiry:
+Use `--brief` when you only want the next step, usage-window status, subscription timing, projected depletion, and next banked-reset expiry:
 
 ```bash
 codexresets --brief
@@ -141,12 +145,16 @@ A future `USE A BANKED RESET IN ...` message is a forecast of when usage may rea
 
 Also compare the recommendation with `WEEKLY LIMIT RESETS`. If the projected 95% point occurs shortly before the natural weekly reset, using a banked reset is useful only when uninterrupted capacity during that gap matters to you. When the banked reset remains valid after the natural reset, you can instead keep it, let the weekly window reset naturally, and reassess before the banked reset expires. The CLI cannot decide that personal tradeoff from percentages alone.
 
+CodexResets first reads the signed `chatgpt_subscription_active_until` claim stored by Codex as the last confirmed end of subscription access. When richer metadata is available, a canceled subscription uses `active_until` as its expiry only with `will_renew: false`, while a renewing boundary is displayed as `SUBSCRIPTION RENEWS` and does not shorten the forecast. A banked-reset recommendation is moved before whichever confirmed cutoff comes first: subscription access ending or the reset's own expiry. If no subscription timing is available, the report continues without a subscription cutoff.
+
 For an exact weekly reset value suitable for scripts, request JSON and read `weekly_usage.resets_at`:
 
 ```bash
 codexresets --format json \
   | node -e 'let s=""; process.stdin.on("data", d => s += d).on("end", () => console.log(JSON.parse(s).weekly_usage?.resets_at ?? "unavailable"))'
 ```
+
+Subscription-aware automation can read `subscription.expires_at`, `recommendation.deadline_at`, and `recommendation.deadline_type`. Each usage window also includes `planning_boundary_at`, `planning_boundary_type`, and `exhausts_before_planning_boundary`, so consumers can distinguish the natural reset from an earlier subscription cutoff. `subscription.will_renew: null` means the signed Codex token confirms the access end but does not state whether billing will renew.
 
 ### Use a due banked reset
 
@@ -215,11 +223,12 @@ codexresets --forget-history
 
 - Your Codex credential file is read locally. Access tokens are sent only to the relevant OpenAI ChatGPT services.
 - Tokens and raw authentication responses are never printed.
+- Subscription output is limited to plan type, renewal state, and billing-period dates; subscription and account IDs are not rendered.
 - If a session refresh is required, `auth.json` may be updated and secured with file mode `0600`.
 - Approved redemption starts the local `codex app-server` process and sends only the selected opaque reset ID plus a one-time idempotency key.
 - Consuming a banked reset is irreversible. CodexResets requires an interactive exact-`yes` confirmation and refreshes limits after a successful or already-completed redemption.
 - Codex app-server is an experimental interface and may change; use a current Codex CLI release.
-- Forecasts are estimates. Usage patterns and undocumented service responses can change.
+- Forecasts are estimates. Usage patterns, subscription metadata, and undocumented service responses can change.
 - Keep `--show-ids` off when sharing screenshots or logs.
 - Never share `~/.codex/auth.json` or an unreviewed API response.
 

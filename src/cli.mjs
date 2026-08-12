@@ -349,6 +349,11 @@ function recommendationFingerprint(report) {
     action: report.recommendation.action,
     constrainingWindow: report.recommendation.constrainingWindow,
     recommendedIn: timeBucket(report.recommendation.recommendedAt),
+    deadlineAt: report.recommendation.deadlineAt?.toISOString() ?? null,
+    deadlineType: report.recommendation.deadlineType,
+    subscriptionExpiresAt: report.subscription?.expiresAt?.toISOString() ?? null,
+    subscriptionRenewsAt: report.subscription?.renewsAt?.toISOString() ?? null,
+    subscriptionWillRenew: report.subscription?.willRenew ?? null,
     nextExpiry: report.nextSavedReset?.expiresAt?.toISOString() ?? null,
     nextUrgency: report.nextSavedReset?.urgency ?? null,
   });

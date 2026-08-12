@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 
 export const CREDITS_URL = 'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits';
 export const USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
+export const SUBSCRIPTIONS_URL = 'https://chatgpt.com/backend-api/subscriptions';
 const TOKEN_URL = 'https://auth.openai.com/api/accounts/oauth/token';
 
 export class SafeError extends Error {
@@ -30,6 +31,39 @@ export function clientIdFromAuth(auth) {
   const audience = payload?.aud;
   const clientId = Array.isArray(audience) ? audience[0] : audience;
   return typeof clientId === 'string' ? clientId : '';
+}
+
+export function accountIdFromAuth(auth) {
+  const storedAccountId = auth?.tokens?.account_id;
+  if (typeof storedAccountId === 'string' && storedAccountId) return storedAccountId;
+
+  const payload = decodeJwtPayload(auth?.tokens?.id_token);
+  const accountId = payload?.['https://api.openai.com/auth']?.chatgpt_account_id
+    ?? payload?.chatgpt_account_id;
+  return typeof accountId === 'string' ? accountId : '';
+}
+
+export function subscriptionFromAuth(auth) {
+  const payload = decodeJwtPayload(auth?.tokens?.id_token);
+  const claims = payload?.['https://api.openai.com/auth'];
+  if (!claims || typeof claims !== 'object') return null;
+
+  const activeStart = claims.chatgpt_subscription_active_start;
+  const activeUntil = claims.chatgpt_subscription_active_until;
+  const planType = claims.chatgpt_plan_type;
+  if (!activeStart && !activeUntil && !planType) return null;
+
+  return {
+    ...(typeof planType === 'string' && planType ? { plan_type: planType } : {}),
+    ...(activeStart ? { active_start: activeStart } : {}),
+    ...(activeUntil ? {
+      active_until: activeUntil,
+      // This signed claim is the last confirmed end of subscription access.
+      // Treat it as a planning cutoff when richer renewal metadata is unavailable.
+      expires_at: activeUntil,
+    } : {}),
+    will_renew: null,
+  };
 }
 
 function safeErrorCode(value) {
@@ -185,6 +219,22 @@ const requestUsage = (accessToken, fetchImpl) => requestResource(
   fetchImpl,
 );
 
+async function requestSubscription(accessToken, accountId, fetchImpl) {
+  try {
+    return await requestResource(
+      `${SUBSCRIPTIONS_URL}?account_id=${encodeURIComponent(accountId)}`,
+      'subscription',
+      accessToken,
+      fetchImpl,
+    );
+  } catch (error) {
+    // Subscription metadata is an undocumented, optional enhancement. Usage and
+    // banked-reset reporting must remain available if this endpoint is absent.
+    if (error instanceof SafeError) return null;
+    throw error;
+  }
+}
+
 async function fetchWithSession(authFile, fetchImpl, request) {
   if (typeof fetchImpl !== 'function') {
     throw new SafeError('This Node.js version does not provide fetch. Install Node.js 18 or newer.');
@@ -228,22 +278,47 @@ export async function fetchAccountData(authFile, fetchImpl = globalThis.fetch) {
     ({ auth, accessToken } = await refreshSession(authFile, auth, fetchImpl));
   }
 
-  let [credits, usage] = await Promise.all([
-    requestCredits(accessToken, fetchImpl),
-    requestUsage(accessToken, fetchImpl),
-  ]);
+  const requestAccountResources = async () => {
+    const accountId = accountIdFromAuth(auth);
+    const tokenSubscription = subscriptionFromAuth(auth);
+    const [credits, usage, subscription] = await Promise.all([
+      requestCredits(accessToken, fetchImpl),
+      requestUsage(accessToken, fetchImpl),
+      !tokenSubscription?.expires_at && accountId
+        ? requestSubscription(accessToken, accountId, fetchImpl)
+        : null,
+    ]);
+    return { credits, usage, subscription, tokenSubscription };
+  };
+
+  let {
+    credits,
+    usage,
+    subscription,
+    tokenSubscription,
+  } = await requestAccountResources();
 
   if (credits.unauthorized || usage.unauthorized) {
     ({ auth, accessToken } = await refreshSession(authFile, auth, fetchImpl));
-    [credits, usage] = await Promise.all([
-      requestCredits(accessToken, fetchImpl),
-      requestUsage(accessToken, fetchImpl),
-    ]);
+    ({
+      credits,
+      usage,
+      subscription,
+      tokenSubscription,
+    } = await requestAccountResources());
   }
 
   if (credits.unauthorized || usage.unauthorized) {
     throw new SafeError('The refreshed Codex session was rejected. Run `codex login` and try again.');
   }
 
-  return { ...credits.body, usage: usage.body };
+  return {
+    ...credits.body,
+    usage: usage.body,
+    ...(subscription && !subscription.unauthorized
+      ? { subscription: subscription.body }
+      : tokenSubscription
+        ? { subscription: tokenSubscription }
+        : {}),
+  };
 }

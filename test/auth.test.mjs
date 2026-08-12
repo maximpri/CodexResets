@@ -5,10 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
+  accountIdFromAuth,
   clientIdFromAuth,
   fetchAccountData,
   fetchCredits,
   SafeError,
+  subscriptionFromAuth,
 } from '../src/auth.mjs';
 import { scanGitHistory, scanText } from '../scripts/scan-secrets.mjs';
 
@@ -19,6 +21,31 @@ function jwt(payload) {
 test('extracts a synthetic OAuth audience without exposing the token', () => {
   const auth = { tokens: { id_token: jwt({ aud: ['synthetic-client'] }) } };
   assert.equal(clientIdFromAuth(auth), 'synthetic-client');
+});
+
+test('extracts the selected ChatGPT account ID from current auth formats', () => {
+  assert.equal(accountIdFromAuth({ tokens: { account_id: 'account-stored' } }), 'account-stored');
+  assert.equal(accountIdFromAuth({ tokens: { id_token: jwt({
+    'https://api.openai.com/auth': { chatgpt_account_id: 'account-claim' },
+  }) } }), 'account-claim');
+  assert.equal(accountIdFromAuth({ tokens: {} }), '');
+});
+
+test('extracts subscription access timing from signed ID-token claims', () => {
+  const subscription = subscriptionFromAuth({ tokens: { id_token: jwt({
+    'https://api.openai.com/auth': {
+      chatgpt_plan_type: 'pro',
+      chatgpt_subscription_active_start: '2026-07-01T00:00:00Z',
+      chatgpt_subscription_active_until: '2026-08-01T00:00:00Z',
+    },
+  }) } });
+  assert.deepEqual(subscription, {
+    plan_type: 'pro',
+    active_start: '2026-07-01T00:00:00Z',
+    active_until: '2026-08-01T00:00:00Z',
+    expires_at: '2026-08-01T00:00:00Z',
+    will_renew: null,
+  });
 });
 
 test('secret scanner reports metadata without retaining secret values', () => {
@@ -171,6 +198,119 @@ test('fetches credits and weekly usage with the same authenticated session', asy
   assert.ok(requests.every(({ options }) => (
     options.headers.authorization === 'Bearer synthetic-current-token'
   )));
+});
+
+test('fetches subscription timing when the selected account ID is available', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'codexresets-'));
+  const authFile = join(directory, 'auth.json');
+  await writeFile(authFile, JSON.stringify({ tokens: {
+    access_token: 'synthetic-current-token',
+    account_id: 'account synthetic',
+  } }), { mode: 0o600 });
+
+  const requests = [];
+  const mockFetch = async (url, options) => {
+    requests.push({ url, options });
+    if (url.endsWith('/wham/usage')) {
+      return new Response(JSON.stringify({ rate_limit: { allowed: true } }), { status: 200 });
+    }
+    if (url.includes('/backend-api/subscriptions?')) {
+      return new Response(JSON.stringify({
+        plan_type: 'plus',
+        active_until: '2026-08-20T12:00:00Z',
+        will_renew: false,
+      }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ credits: [] }), { status: 200 });
+  };
+
+  const result = await fetchAccountData(authFile, mockFetch);
+  assert.equal(result.subscription.plan_type, 'plus');
+  assert.equal(requests.length, 3);
+  assert.match(
+    requests.find(({ url }) => url.includes('/backend-api/subscriptions?')).url,
+    /account_id=account%20synthetic$/,
+  );
+  assert.ok(requests.every(({ options }) => (
+    options.headers.authorization === 'Bearer synthetic-current-token'
+  )));
+});
+
+test('prefers signed subscription timing without calling the browser-only endpoint', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'codexresets-'));
+  const authFile = join(directory, 'auth.json');
+  await writeFile(authFile, JSON.stringify({ tokens: {
+    access_token: 'synthetic-current-token',
+    account_id: 'account-synthetic',
+    id_token: jwt({
+      'https://api.openai.com/auth': {
+        chatgpt_plan_type: 'pro',
+        chatgpt_subscription_active_until: '2026-08-20T12:00:00Z',
+      },
+    }),
+  } }), { mode: 0o600 });
+
+  const requests = [];
+  const mockFetch = async (url) => {
+    requests.push(url);
+    if (url.endsWith('/wham/usage')) {
+      return new Response(JSON.stringify({ rate_limit: { allowed: true } }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ credits: [] }), { status: 200 });
+  };
+
+  const result = await fetchAccountData(authFile, mockFetch);
+  assert.equal(result.subscription.expires_at, '2026-08-20T12:00:00Z');
+  assert.equal(requests.length, 2);
+  assert.equal(requests.some((url) => url.includes('/backend-api/subscriptions?')), false);
+});
+
+test('keeps usage reporting available when optional subscription metadata fails', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'codexresets-'));
+  const authFile = join(directory, 'auth.json');
+  await writeFile(authFile, JSON.stringify({ tokens: {
+    access_token: 'synthetic-current-token',
+    account_id: 'account-synthetic',
+  } }), { mode: 0o600 });
+
+  const mockFetch = async (url) => {
+    if (url.endsWith('/wham/usage')) {
+      return new Response(JSON.stringify({ rate_limit: { allowed: true } }), { status: 200 });
+    }
+    if (url.includes('/backend-api/subscriptions?')) {
+      return new Response(JSON.stringify({ error: 'unavailable' }), { status: 503 });
+    }
+    return new Response(JSON.stringify({ credits: [] }), { status: 200 });
+  };
+
+  const result = await fetchAccountData(authFile, mockFetch);
+  assert.equal(result.usage.rate_limit.allowed, true);
+  assert.equal(Object.hasOwn(result, 'subscription'), false);
+});
+
+test('does not refresh a valid session when only subscription metadata is unauthorized', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'codexresets-'));
+  const authFile = join(directory, 'auth.json');
+  await writeFile(authFile, JSON.stringify({ tokens: {
+    access_token: 'synthetic-current-token',
+    account_id: 'account-synthetic',
+  } }), { mode: 0o600 });
+
+  const requests = [];
+  const mockFetch = async (url) => {
+    requests.push(url);
+    if (url.endsWith('/wham/usage')) {
+      return new Response(JSON.stringify({ rate_limit: { allowed: true } }), { status: 200 });
+    }
+    if (url.includes('/backend-api/subscriptions?')) return new Response('{}', { status: 401 });
+    return new Response(JSON.stringify({ credits: [] }), { status: 200 });
+  };
+
+  const result = await fetchAccountData(authFile, mockFetch);
+  assert.equal(result.usage.rate_limit.allowed, true);
+  assert.equal(Object.hasOwn(result, 'subscription'), false);
+  assert.equal(requests.length, 3);
+  assert.equal(requests.some((url) => url.includes('/oauth/token')), false);
 });
 
 test('combined usage refreshes once when both account requests reject the session', async () => {

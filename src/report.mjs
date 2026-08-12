@@ -9,7 +9,7 @@ const DAYTIME_START_HOUR = 8;
 const DAYTIME_END_HOUR = 22;
 const DAYTIME_USAGE_WEIGHT = 1.25;
 const NIGHT_USAGE_WEIGHT = 0.65;
-const METHODOLOGY_VERSION = 2;
+const METHODOLOGY_VERSION = 3;
 
 const ANSI = {
   reset: '\u001b[0m',
@@ -380,16 +380,82 @@ function highestResetValue(values) {
   return { window, value };
 }
 
-function buildRecommendation(fiveHourUsage, weeklyUsage, credits, checkedAt, timeZone) {
+function planningBoundaryFor(usageWindow, subscription) {
+  if (subscription?.expiresAt && subscription.expiresAt < usageWindow.resetsAt) {
+    return { at: subscription.expiresAt, type: 'subscription_expiry' };
+  }
+  return { at: usageWindow.resetsAt, type: 'natural_reset' };
+}
+
+function exhaustsBeforePlanningBoundary(usageWindow, subscription) {
+  if (!usageWindow?.estimatedExhaustionAt) return false;
+  return usageWindow.estimatedExhaustionAt < planningBoundaryFor(
+    usageWindow,
+    subscription,
+  ).at;
+}
+
+function normalizeSubscription(data, checkedAt) {
+  const candidate = data?.subscription?.subscription ?? data?.subscription;
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
+
+  const planType = String(candidate.plan_type ?? candidate.planType ?? '').trim() || null;
+  const willRenewValue = candidate.will_renew ?? candidate.willRenew;
+  const willRenew = typeof willRenewValue === 'boolean' ? willRenewValue : null;
+  const activeUntil = timestampDate(
+    candidate.active_until
+      ?? candidate.activeUntil
+      ?? candidate.current_period_end
+      ?? candidate.currentPeriodEnd,
+  );
+  const explicitExpiry = timestampDate(
+    candidate.expires_at
+      ?? candidate.expiresAt
+      ?? candidate.expiry_at
+      ?? candidate.expiryAt,
+  );
+  const expiresAt = explicitExpiry ?? (willRenew === false ? activeUntil : null);
+  const renewsAt = willRenew === true ? activeUntil : null;
+  if (!planType && willRenew === null && !activeUntil && !explicitExpiry) return null;
+
+  return {
+    planType,
+    willRenew,
+    activeUntil,
+    expiresAt,
+    renewsAt,
+    remainingMs: expiresAt ? expiresAt.getTime() - checkedAt.getTime() : Number.NaN,
+  };
+}
+
+function buildRecommendation(
+  fiveHourUsage,
+  weeklyUsage,
+  credits,
+  subscription,
+  checkedAt,
+  timeZone,
+) {
   const usableCredits = credits.filter((credit) => !credit.expiresAt || credit.remainingMs > 0);
   const nextSavedReset = usableCredits.find((credit) => credit.expiresAt) ?? usableCredits[0] ?? null;
   const usageWindows = [fiveHourUsage, weeklyUsage].filter(Boolean);
   const planningUsage = weeklyUsage ?? fiveHourUsage;
+  const deadlines = [
+    nextSavedReset?.expiresAt
+      ? { at: nextSavedReset.expiresAt, type: 'banked_reset_expiry' }
+      : null,
+    subscription?.expiresAt
+      ? { at: subscription.expiresAt, type: 'subscription_expiry' }
+      : null,
+  ].filter(Boolean).sort((left, right) => left.at - right.at);
+  const decisionDeadline = deadlines[0] ?? null;
   const base = {
     targetPercent: RESET_TARGET_PERCENT,
     constrainingWindow: null,
     recommendedAt: null,
     projectionAt: null,
+    deadlineAt: decisionDeadline?.at ?? null,
+    deadlineType: decisionDeadline?.type ?? null,
     projectedUsagePercent: null,
     estimatedResetValuePercent: null,
     estimatedResetValues: {
@@ -397,6 +463,17 @@ function buildRecommendation(fiveHourUsage, weeklyUsage, credits, checkedAt, tim
       weeklyPercent: null,
     },
   };
+
+  if (subscription?.expiresAt && subscription.expiresAt <= checkedAt) {
+    return {
+      nextSavedReset,
+      recommendation: {
+        ...base,
+        action: 'SUBSCRIPTION_EXPIRED',
+        reason: 'The subscription has expired, so a banked reset should not be scheduled or redeemed.',
+      },
+    };
+  }
 
   if (!usageWindows.length) {
     return {
@@ -411,16 +488,22 @@ function buildRecommendation(fiveHourUsage, weeklyUsage, credits, checkedAt, tim
 
   if (!usableCredits.length) {
     const exhaustion = usageWindows
-      .filter((usageWindow) => usageWindow.exhaustsBeforeReset)
+      .filter((usageWindow) => exhaustsBeforePlanningBoundary(usageWindow, subscription))
       .sort((a, b) => a.estimatedExhaustionAt - b.estimatedExhaustionAt)[0];
+    const subscriptionEndsFirst = subscription?.expiresAt
+      && usageWindows.some((usageWindow) => (
+        planningBoundaryFor(usageWindow, subscription).type === 'subscription_expiry'
+      ));
     return {
       nextSavedReset: null,
       recommendation: {
         ...base,
         action: 'NO_SAVED_RESET',
-        constrainingWindow: exhaustion?.name ?? null,
+        constrainingWindow: exhaustion?.name ?? (subscriptionEndsFirst ? planningUsage.name : null),
         reason: exhaustion
           ? `${exhaustion.label} usage is projected to run out before its reset, but no banked reset is available.`
+          : subscriptionEndsFirst
+            ? 'Subscription access ends before the active usage window reaches its next natural reset, and no banked reset is available.'
           : 'The active usage windows are expected to reset before current usage runs out.',
       },
     };
@@ -462,18 +545,18 @@ function buildRecommendation(fiveHourUsage, weeklyUsage, credits, checkedAt, tim
     }))
     .filter(({ targetAt }) => targetAt)
     .sort((a, b) => a.targetAt - b.targetAt)[0] ?? null;
-  const latestUseAt = nextSavedReset?.expiresAt
+  const latestUseAt = decisionDeadline?.at
     ? new Date(Math.max(
       checkedAt.getTime(),
-      nextSavedReset.expiresAt.getTime() - EXPIRY_BUFFER,
+      decisionDeadline.at.getTime() - EXPIRY_BUFFER,
     ))
     : null;
-  const expiresBeforeTarget = latestUseAt
+  const deadlineBeforeTarget = latestUseAt
     && (!targetCandidate || latestUseAt < targetCandidate.targetAt);
-  const expiresBeforePlanningReset = nextSavedReset?.expiresAt
-    && nextSavedReset.expiresAt < planningUsage.resetsAt;
+  const deadlineBeforePlanningReset = decisionDeadline?.at
+    && decisionDeadline.at < planningUsage.resetsAt;
 
-  if (targetCandidate && !expiresBeforeTarget) {
+  if (targetCandidate && !deadlineBeforeTarget) {
     const estimatedResetValues = resetValuesAt(
       fiveHourUsage,
       weeklyUsage,
@@ -497,7 +580,7 @@ function buildRecommendation(fiveHourUsage, weeklyUsage, credits, checkedAt, tim
     };
   }
 
-  if (expiresBeforeTarget && expiresBeforePlanningReset) {
+  if (deadlineBeforeTarget && deadlineBeforePlanningReset) {
     const estimatedResetValues = resetValuesAt(
       fiveHourUsage,
       weeklyUsage,
@@ -519,7 +602,9 @@ function buildRecommendation(fiveHourUsage, weeklyUsage, credits, checkedAt, tim
           projectedUsagePercent: estimatedResetValuePercent,
           estimatedResetValuePercent,
           estimatedResetValues,
-          reason: 'The next banked reset has no projected recovery value before it expires.',
+          reason: decisionDeadline.type === 'subscription_expiry'
+            ? 'The banked reset has no projected recovery value before the subscription expires.'
+            : 'The next banked reset has no projected recovery value before it expires.',
         },
       };
     }
@@ -534,7 +619,9 @@ function buildRecommendation(fiveHourUsage, weeklyUsage, credits, checkedAt, tim
         projectedUsagePercent: estimatedResetValuePercent,
         estimatedResetValuePercent,
         estimatedResetValues,
-        reason: 'Use the next banked reset near expiry to recover its projected value before it is lost.',
+        reason: decisionDeadline.type === 'subscription_expiry'
+          ? 'Use the banked reset before the subscription expires to recover its projected value while it is still usable.'
+          : 'Use the next banked reset near expiry to recover its projected value before it is lost.',
       },
     };
   }
@@ -589,10 +676,12 @@ export function normalizeReport(data, { now = new Date(), timeZone, history = []
     timeZone,
     history,
   );
+  const subscription = normalizeSubscription(data, checkedAt);
   const { nextSavedReset, recommendation } = buildRecommendation(
     fiveHourUsage,
     weeklyUsage,
     credits,
+    subscription,
     checkedAt,
     timeZone,
   );
@@ -601,6 +690,7 @@ export function normalizeReport(data, { now = new Date(), timeZone, history = []
     timeZone,
     fiveHourUsage,
     weeklyUsage,
+    subscription,
     nextSavedReset,
     recommendation,
     credits,
@@ -629,8 +719,9 @@ function idLabel(id) {
   return `ID …${tail.slice(-8)}`;
 }
 
-function usageWindowJson(usage, paceUnit) {
+function usageWindowJson(usage, paceUnit, subscription) {
   if (!usage) return null;
+  const planningBoundary = planningBoundaryFor(usage, subscription);
   return {
     used_percent: usage.usedPercent,
     remaining_percent: usage.remainingPercent,
@@ -649,6 +740,9 @@ function usageWindowJson(usage, paceUnit) {
     }),
     estimated_exhaustion_at: usage.estimatedExhaustionAt?.toISOString() ?? null,
     exhausts_before_reset: usage.exhaustsBeforeReset,
+    planning_boundary_at: planningBoundary.at.toISOString(),
+    planning_boundary_type: planningBoundary.type,
+    exhausts_before_planning_boundary: exhaustsBeforePlanningBoundary(usage, subscription),
     projected_used_percent_at_reset: Number(usage.projectedUsedAtReset.toFixed(2)),
     projection_confidence: usage.confidence,
     pace_source: usage.paceSource,
@@ -667,14 +761,26 @@ export function renderJson(report, { showIds = false } = {}) {
     methodology_version: METHODOLOGY_VERSION,
     checked_at: report.checkedAt.toISOString(),
     time_zone: report.timeZone,
-    five_hour_usage: usageWindowJson(report.fiveHourUsage, 'hour'),
-    weekly_usage: usageWindowJson(report.weeklyUsage, 'day'),
+    subscription: report.subscription ? {
+      plan_type: report.subscription.planType,
+      will_renew: report.subscription.willRenew,
+      active_until: report.subscription.activeUntil?.toISOString() ?? null,
+      renews_at: report.subscription.renewsAt?.toISOString() ?? null,
+      expires_at: report.subscription.expiresAt?.toISOString() ?? null,
+      expires_in: report.subscription.expiresAt
+        ? formatDuration(report.subscription.remainingMs)
+        : null,
+    } : null,
+    five_hour_usage: usageWindowJson(report.fiveHourUsage, 'hour', report.subscription),
+    weekly_usage: usageWindowJson(report.weeklyUsage, 'day', report.subscription),
     recommendation: {
       action: recommendation.action,
       target_percent: recommendation.targetPercent,
       constraining_window: recommendation.constrainingWindow,
       recommended_at: recommendation.recommendedAt?.toISOString() ?? null,
       projection_at: recommendation.projectionAt?.toISOString() ?? null,
+      deadline_at: recommendation.deadlineAt?.toISOString() ?? null,
+      deadline_type: recommendation.deadlineType,
       projected_usage_percent: recommendation.projectedUsagePercent === null
         ? null
         : Number(recommendation.projectedUsagePercent.toFixed(2)),
@@ -723,9 +829,11 @@ function formatFriendlyDate(date, timeZone) {
   }).format(date);
 }
 
-function compactUsageState(usage) {
+function compactUsageState(usage, subscription) {
   if (!usage) return null;
-  if (usage.exhaustsBeforeReset) return { label: 'AT RISK', style: 'red' };
+  if (exhaustsBeforePlanningBoundary(usage, subscription)) {
+    return { label: 'AT RISK', style: 'red' };
+  }
   if (usage.averagePercentPerDay === null) return { label: 'LEARNING', style: 'dim' };
   return { label: 'ON TRACK', style: 'green' };
 }
@@ -773,7 +881,9 @@ function compactDecision(report) {
       title: 'PLAN TO RECHECK',
       style: 'yellow',
       next: recommendation.action === 'USE_BEFORE_EXPIRY'
-        ? `Recheck near ${when}; redeem only if the reset value is still worthwhile.`
+        ? recommendation.deadlineType === 'subscription_expiry'
+          ? `Recheck near ${when}; redeem only if the reset value is worthwhile before the subscription ends.`
+          : `Recheck near ${when}; redeem only if the reset value is still worthwhile.`
         : `Recheck near ${when}; redeem only if usage is still near its limit.`,
     };
   }
@@ -802,7 +912,17 @@ function compactDecision(report) {
     return {
       title: 'NO ACTION NEEDED',
       style: 'green',
-      next: 'No useful recovery is expected before this banked reset expires.',
+      next: recommendation.deadlineType === 'subscription_expiry'
+        ? 'No useful recovery is expected before the subscription expires.'
+        : 'No useful recovery is expected before this banked reset expires.',
+    };
+  }
+
+  if (recommendation.action === 'SUBSCRIPTION_EXPIRED') {
+    return {
+      title: 'SUBSCRIPTION EXPIRED',
+      style: 'red',
+      next: 'Renew the subscription before planning or redeeming a banked reset.',
     };
   }
 
@@ -810,7 +930,9 @@ function compactDecision(report) {
     return {
       title: 'NO BANKED RESET AVAILABLE',
       style: 'dim',
-      next: 'Continue using Codex; there is no banked reset to manage.',
+      next: report.subscription?.expiresAt
+        ? `Subscription access ends ${formatFriendlyDate(report.subscription.expiresAt, report.timeZone)}; no banked reset is available.`
+        : 'Continue using Codex; there is no banked reset to manage.',
     };
   }
 
@@ -892,7 +1014,7 @@ function renderCompactTable(report, options = {}) {
 
   const appendUsage = (usage) => {
     if (!usage) return;
-    const state = compactUsageState(usage);
+    const state = compactUsageState(usage, report.subscription);
     pushWrapped(
       `${numberLabel(usage.usedPercent)}% used ${glyph.bullet} ${numberLabel(usage.remainingPercent)}% left`,
       labelPrefix(usage.label),
@@ -912,8 +1034,27 @@ function renderCompactTable(report, options = {}) {
     pushWrapped('Usage data is unavailable in this response.', labelPrefix('Usage'), continuationPrefix, 'dim');
   }
 
+  if (report.subscription) {
+    const plan = report.subscription.planType ? `${terminalSafe(report.subscription.planType)} ` : '';
+    const status = report.subscription.expiresAt
+      ? report.subscription.remainingMs <= 0
+        ? `expired ${formatFriendlyDate(report.subscription.expiresAt, report.timeZone)}`
+        : `expires ${formatFriendlyDate(report.subscription.expiresAt, report.timeZone)} (${formatDuration(report.subscription.remainingMs)})`
+      : report.subscription.renewsAt
+        ? `renews ${formatFriendlyDate(report.subscription.renewsAt, report.timeZone)}`
+        : report.subscription.activeUntil
+          ? `period ends ${formatFriendlyDate(report.subscription.activeUntil, report.timeZone)} ${glyph.bullet} renewal unknown`
+          : 'expiry unavailable';
+    pushWrapped(
+      `${plan}${status}`,
+      labelPrefix('Plan'),
+      continuationPrefix,
+      report.subscription.expiresAt ? 'yellow' : 'dim',
+    );
+  }
+
   const forecastUsage = recommendationUsage(report);
-  if (forecastUsage?.estimatedExhaustionAt && forecastUsage.exhaustsBeforeReset) {
+  if (exhaustsBeforePlanningBoundary(forecastUsage, report.subscription)) {
     pushWrapped(
       `${forecastUsage.label} capacity may run out ${formatFriendlyDate(forecastUsage.estimatedExhaustionAt, report.timeZone)} ${glyph.bullet} ${forecastUsage.confidence}`,
       labelPrefix('Forecast'),
@@ -989,6 +1130,7 @@ function renderDetailedTable(report, options = {}) {
     SKIP_EXPIRING_RESET: 'green',
     NO_SAVED_RESET: 'dim',
     CHECK_USAGE: 'cyan',
+    SUBSCRIPTION_EXPIRED: 'red',
   };
   const actionLabel = {
     USE_NOW: 'USE NOW',
@@ -999,6 +1141,7 @@ function renderDetailedTable(report, options = {}) {
     SKIP_EXPIRING_RESET: 'SKIP / WAIT',
     NO_SAVED_RESET: 'NO BANKED',
     CHECK_USAGE: 'CHECK USAGE',
+    SUBSCRIPTION_EXPIRED: 'EXPIRED',
   };
   const actionHeadline = {
     USE_NOW: 'USE A BANKED RESET NOW',
@@ -1007,6 +1150,7 @@ function renderDetailedTable(report, options = {}) {
     SKIP_EXPIRING_RESET: 'LET THIS BANKED RESET EXPIRE',
     NO_SAVED_RESET: 'NO BANKED RESET TO USE',
     CHECK_USAGE: 'CHECK USAGE BEFORE DECIDING',
+    SUBSCRIPTION_EXPIRED: 'RENEW YOUR SUBSCRIPTION',
   };
   const numberLabel = (value, decimals = 1) => Number.isInteger(value)
     ? String(value)
@@ -1123,7 +1267,9 @@ function renderDetailedTable(report, options = {}) {
       : recommendation.action === 'WAIT_FOR_FIVE_HOUR_RESET'
         ? 'AT 5-HOUR RESET'
       : recommendation.action === 'SKIP_EXPIRING_RESET'
-        ? 'AT BANKED RESET EXPIRY'
+        ? recommendation.deadlineType === 'subscription_expiry'
+          ? 'AT SUBSCRIPTION EXPIRY'
+          : 'AT BANKED RESET EXPIRY'
         : 'PROJECTED USAGE';
     output.push(sides(
       paint(projectionLabel, 'dim'),
@@ -1131,10 +1277,19 @@ function renderDetailedTable(report, options = {}) {
     ));
   }
   if (report.nextSavedReset) {
-    const expiry = report.nextSavedReset.expiresAt;
+    const expiry = recommendation.deadlineAt;
+    const deadlineLabel = recommendation.deadlineType === 'subscription_expiry'
+      ? 'subscription expires in'
+      : 'banked reset expires in';
     output.push(sides(
       paint('DECISION DEADLINE', 'dim'),
-      expiry ? `banked reset expires in ${paint(formatDuration(report.nextSavedReset.remainingMs), 'bold')}` : paint('banked reset expiry unknown', 'dim'),
+      expiry
+        ? expiry <= report.checkedAt
+          ? paint(recommendation.deadlineType === 'subscription_expiry'
+            ? 'subscription expired'
+            : 'banked reset expired', 'red')
+          : `${deadlineLabel} ${paint(formatDuration(expiry - report.checkedAt), 'bold')}`
+        : paint('banked reset expiry unknown', 'dim'),
     ));
   } else {
     output.push(line(paint('No unexpired banked reset is available.', 'dim')));
@@ -1157,10 +1312,10 @@ function renderDetailedTable(report, options = {}) {
       'focus',
     );
   }
-  if (report.fiveHourUsage?.exhaustsBeforeReset) {
+  if (exhaustsBeforePlanningBoundary(report.fiveHourUsage, report.subscription)) {
     addMilestone(report.fiveHourUsage.estimatedExhaustionAt, '5-HOUR CAPACITY RUNS OUT', 'red', 'risk');
   }
-  if (report.weeklyUsage?.exhaustsBeforeReset) {
+  if (exhaustsBeforePlanningBoundary(report.weeklyUsage, report.subscription)) {
     addMilestone(report.weeklyUsage.estimatedExhaustionAt, 'WEEKLY CAPACITY RUNS OUT', 'red', 'risk');
   }
   if (report.nextSavedReset?.expiresAt) {
@@ -1170,6 +1325,16 @@ function renderDetailedTable(report, options = {}) {
       urgencyStyle[report.nextSavedReset.urgency] ?? 'dim',
       'risk',
     );
+  }
+  if (report.subscription?.expiresAt) {
+    addMilestone(
+      report.subscription.expiresAt,
+      'SUBSCRIPTION EXPIRES',
+      'red',
+      'risk',
+    );
+  } else if (report.subscription?.renewsAt) {
+    addMilestone(report.subscription.renewsAt, 'SUBSCRIPTION RENEWS', 'dim');
   }
   addMilestone(report.fiveHourUsage?.resetsAt, '5-HOUR LIMIT RESETS', 'green');
   addMilestone(report.weeklyUsage?.resetsAt, 'WEEKLY LIMIT RESETS', 'green');
@@ -1214,9 +1379,23 @@ function renderDetailedTable(report, options = {}) {
 
   output.push(separator());
   output.push(line(paint('LIMIT STATUS', 'bold')));
+  if (report.subscription) {
+    const plan = terminalSafe(report.subscription.planType || 'Subscription');
+    const status = report.subscription.expiresAt
+      ? `${report.subscription.remainingMs <= 0 ? 'expired' : `expires in ${formatDuration(report.subscription.remainingMs)}`}`
+      : report.subscription.renewsAt
+        ? `renews in ${formatDuration(report.subscription.renewsAt - report.checkedAt)}`
+        : 'expiry unavailable';
+    output.push(sides(
+      paint(truncate(`PLAN      ${plan}`, Math.max(12, inner - visibleLength(status) - 1)), 'bold'),
+      paint(status, report.subscription.remainingMs <= 0 ? 'red' : 'dim'),
+    ));
+  }
   const appendUsage = (usage, paceUnit) => {
     if (!usage) return;
-    const state = usage.exhaustsBeforeReset
+    const exhaustsBeforeBoundary = exhaustsBeforePlanningBoundary(usage, report.subscription);
+    const planningBoundary = planningBoundaryFor(usage, report.subscription);
+    const state = exhaustsBeforeBoundary
       ? paint('AT RISK', 'bold', 'red')
       : usage.averagePercentPerDay === null
         ? paint('LEARNING', 'bold', 'dim')
@@ -1233,8 +1412,10 @@ function renderDetailedTable(report, options = {}) {
     const paceBasis = usage.paceSource === 'recorded_history'
       ? 'recorded delta'
       : 'day/night weighted';
-    const outcome = usage.exhaustsBeforeReset
+    const outcome = exhaustsBeforeBoundary
       ? `empty in ${formatDuration(usage.estimatedExhaustionAt - report.checkedAt)}`
+      : planningBoundary.type === 'subscription_expiry'
+        ? 'subscription ends first'
       : 'lasts through reset';
     output.push(...wrappedLines(
       `Pace ${numberLabel(pace, 2)} points/${paceUnit} ${glyph.bullet} ${paceBasis} ${glyph.bullet} ${usage.confidence} confidence ${glyph.bullet} ${outcome}`,

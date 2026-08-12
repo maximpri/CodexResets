@@ -14,6 +14,9 @@ All notable changes to this project will be documented here. The format follows 
 
 ### Added
 
+- Subscription renewal and expiry reporting from signed Codex authentication claims, with private normalized JSON fields and a graceful optional-endpoint fallback.
+- Subscription-aware banked-reset planning that caps recommendations at a non-renewing subscription's expiry without mistaking an automatic renewal date for lost access.
+- Effective planning-boundary fields in JSON so usage forecasts remain distinct from an earlier subscription cutoff.
 - Confirmation-gated banked-reset redemption through the documented Codex app-server operation, with exact-`yes` approval, UUID idempotency, safe non-interactive defaults, and an immediate post-redemption refresh.
 - Quick installation from GitHub with Node.js version validation, optional user-local prefixes, revision pinning, disabled npm lifecycle scripts, and post-install verification.
 - Weekly usage percentage, remaining capacity, and natural reset timing.
@@ -28,6 +31,7 @@ All notable changes to this project will be documented here. The format follows 
 
 ### Changed
 
+- Advanced the forecast methodology to version 3 for the new subscription-expiry constraint.
 - Kept the information-rich decision, milestone, pace, confidence, limit-status, and banked-reset report as the default, with a concise `--brief` mode for quick checks.
 - Added a borderless layout for 40–67-column terminals, grouped help with examples, typo suggestions for long options, and a visible watch-mode status line.
 - Standardized user-facing terminology on “banked reset,” removed the redundant checked-time milestone, and fixed repeated bullets on wrapped detail lines.

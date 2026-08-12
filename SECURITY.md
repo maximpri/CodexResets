@@ -4,7 +4,7 @@
 
 - Authentication requests are sent only to fixed HTTPS OpenAI and ChatGPT endpoints, with redirects rejected.
 - Access and refresh tokens are used in memory and are never included in normal table output, JSON output, or sanitized service errors.
-- Usage responses are normalized to the five-hour and weekly rate-limit fields. Account metadata and raw response bodies are not rendered.
+- Usage responses are normalized to the five-hour and weekly rate-limit fields. Subscription data comes first from signed Codex ID-token claims, with an optional fixed-endpoint fallback, and is limited to plan type, renewal state, and billing-period dates. Account IDs, subscription IDs, tokens, and raw response bodies are not rendered.
 - Credit identifiers are hidden by default. Full JSON IDs and shortened terminal IDs require the explicit `--show-ids` option.
 - Saved resets can be consumed only when a due recommendation is shown in an interactive table session and the user types the full word `yes`. JSON, redirected I/O, offline input, fixed-time reports, custom authentication files, and `--no-redeem-prompt` cannot trigger redemption.
 - Approved redemption uses the local Codex app-server's documented `account/rateLimitResetCredit/consume` method with a fresh UUID idempotency key. The selected opaque credit ID is never printed by the confirmation flow.

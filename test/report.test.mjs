@@ -146,6 +146,100 @@ test('uses an expiring credit for its projected recovery value even without depl
   assert.ok(report.recommendation.estimatedResetValuePercent > 10);
 });
 
+test('uses a canceled subscription expiry as the earlier reset deadline', () => {
+  const data = structuredClone(fixture);
+  data.subscription = {
+    id: 'private-subscription-id',
+    plan_type: 'pro',
+    active_until: '2026-07-15T00:00:00Z',
+    will_renew: false,
+  };
+
+  const report = normalizeReport(data, { now, timeZone: 'UTC' });
+  assert.equal(report.subscription.planType, 'pro');
+  assert.equal(report.subscription.willRenew, false);
+  assert.equal(report.subscription.expiresAt.toISOString(), '2026-07-15T00:00:00.000Z');
+  assert.equal(report.recommendation.action, 'USE_BEFORE_EXPIRY');
+  assert.equal(report.recommendation.deadlineType, 'subscription_expiry');
+  assert.equal(report.recommendation.deadlineAt.toISOString(), '2026-07-15T00:00:00.000Z');
+  assert.equal(report.recommendation.recommendedAt.toISOString(), '2026-07-14T23:45:00.000Z');
+  assert.match(report.recommendation.reason, /before the subscription expires/);
+
+  const output = renderTable(report, { color: false, width: 96, details: true });
+  assert.match(output, /subscription expires in/);
+  assert.match(output, /SUBSCRIPTION EXPIRES/);
+  assert.match(output, /PLAN      pro/);
+  assert.doesNotMatch(output, /WEEKLY CAPACITY RUNS OUT/);
+
+  const json = JSON.parse(renderJson(report));
+  assert.equal(json.subscription.expires_at, '2026-07-15T00:00:00.000Z');
+  assert.equal(json.recommendation.deadline_type, 'subscription_expiry');
+  assert.equal(Object.hasOwn(json.subscription, 'id'), false);
+});
+
+test('uses subscription expiry as the effective usage planning boundary', () => {
+  const data = structuredClone(fixture);
+  data.credits = [];
+  data.subscription = {
+    plan_type: 'pro',
+    expires_at: '2026-07-15T00:00:00Z',
+    will_renew: null,
+  };
+
+  const report = normalizeReport(data, { now, timeZone: 'UTC' });
+  assert.equal(report.weeklyUsage.exhaustsBeforeReset, true);
+  assert.equal(report.recommendation.action, 'NO_SAVED_RESET');
+  assert.match(report.recommendation.reason, /Subscription access ends before/);
+
+  const json = JSON.parse(renderJson(report));
+  assert.equal(json.weekly_usage.planning_boundary_type, 'subscription_expiry');
+  assert.equal(json.weekly_usage.planning_boundary_at, '2026-07-15T00:00:00.000Z');
+  assert.equal(json.weekly_usage.exhausts_before_planning_boundary, false);
+
+  const output = renderTable(report, { color: false, width: 80, brief: true });
+  assert.match(output, /Subscription access ends Wed, Jul 15/);
+  assert.doesNotMatch(output, /capacity may run out/);
+});
+
+test('does not treat a renewing billing-period boundary as subscription expiry', () => {
+  const data = structuredClone(fixture);
+  data.subscription = {
+    plan_type: 'plus',
+    active_until: '2026-07-15T00:00:00Z',
+    will_renew: true,
+  };
+
+  const report = normalizeReport(data, { now, timeZone: 'UTC' });
+  assert.equal(report.subscription.expiresAt, null);
+  assert.equal(report.subscription.renewsAt.toISOString(), '2026-07-15T00:00:00.000Z');
+  assert.equal(report.recommendation.action, 'USE_NEAR_LIMIT');
+  assert.equal(report.recommendation.deadlineType, 'banked_reset_expiry');
+
+  const output = renderTable(report, { color: false, width: 80, brief: true });
+  assert.match(output, /plus renews Wed, Jul 15/);
+  assert.doesNotMatch(output, /subscription expires/i);
+});
+
+test('does not recommend redemption after the subscription has expired', () => {
+  const data = structuredClone(fixture);
+  data.subscription = {
+    plan_type: 'pro',
+    active_until: '2026-07-13T20:00:00Z',
+    will_renew: false,
+  };
+
+  const report = normalizeReport(data, { now, timeZone: 'UTC' });
+  assert.equal(report.recommendation.action, 'SUBSCRIPTION_EXPIRED');
+  assert.equal(report.recommendation.recommendedAt, null);
+  assert.match(report.recommendation.reason, /should not be scheduled or redeemed/);
+
+  const output = renderTable(report, { color: false, width: 80, brief: true });
+  assert.match(output, /SUBSCRIPTION EXPIRED/);
+  assert.match(output, /Renew the subscription/);
+  assert.match(output, /pro expired Mon, Jul 13/);
+  assert.doesNotMatch(output, /expires in expired/);
+});
+
 test('skips an expiring reset when it has no projected recovery value', () => {
   const data = {
     credits: [{
@@ -398,15 +492,17 @@ test('compact output stays within forty columns without borders', () => {
 test('JSON output is normalized and private by default', () => {
   const report = normalizeReport(fixture, { now, timeZone: 'UTC' });
   const privateOutput = JSON.parse(renderJson(report));
-  assert.equal(privateOutput.methodology_version, 2);
+  assert.equal(privateOutput.methodology_version, 3);
   assert.equal(privateOutput.five_hour_usage.used_percent, 20);
   assert.equal(privateOutput.five_hour_usage.window_minutes, 300);
   assert.equal(privateOutput.five_hour_usage.pace_source, 'window_average');
   assert.equal(privateOutput.five_hour_usage.history_sample_count, 0);
   assert.equal(privateOutput.weekly_usage.used_percent, 20);
+  assert.equal(privateOutput.subscription, null);
   assert.equal(privateOutput.weekly_usage.exhausts_before_reset, true);
   assert.equal(privateOutput.recommendation.action, 'USE_NEAR_LIMIT');
   assert.equal(privateOutput.recommendation.constraining_window, 'weekly');
+  assert.equal(privateOutput.recommendation.deadline_type, 'banked_reset_expiry');
   assert.equal(privateOutput.recommendation.estimated_reset_value_percent, 95);
   assert.equal(privateOutput.recommendation.estimated_reset_values.five_hour_percent, null);
   assert.equal(privateOutput.recommendation.estimated_reset_values.weekly_percent, 95);
