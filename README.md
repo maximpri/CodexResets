@@ -1,9 +1,43 @@
 # CodexResets
 
-CodexResets is a safe-by-default CLI and Codex plugin for checking exactly when your Codex usage windows reset. It leads with the five-hour and weekly limits, shows remaining capacity, and keeps natural usage resets separate from subscription timing, banked-reset expiry dates, and purchased credits. When a banked reset is actually due, an interactive session can ask for permission and use it only after explicit approval.
+See exactly when your Codex five-hour and weekly usage limits reset, then decide safely when a banked reset is worth using.
+
+![CodexResets terminal report showing usage, deadlines, and the natural weekly reset](docs/images/codexresets-terminal.png)
+
+Install and run the CLI:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/maximpri/CodexResets/main/install.sh \
+  -o codexresets-install.sh
+bash codexresets-install.sh
+codexresets
+```
 
 > [!IMPORTANT]
 > CodexResets is an independent community project, not an official OpenAI product. It uses undocumented ChatGPT endpoints that may change. Use `/usage` in the Codex TUI for the supported OpenAI experience.
+
+## Reproduce the demo
+
+The screenshot shows the report shape. The command below renders a current report from the checked-in fixture without credentials, network access, or account changes:
+
+```bash
+node src/cli.mjs \
+  --input test/fixtures/credits.json \
+  --now 2026-07-13T23:25:36Z \
+  --timezone America/Toronto \
+  --color never \
+  --width 80
+```
+
+The fixture, JSON output, and tests are the reproducibility harness for the project. Run the full verification suite with:
+
+```bash
+npm test
+npm run check
+npm run security:secrets
+```
+
+CodexResets makes no synthetic model-speed or cost claim. Its narrower, inspectable claim is that it reports the service's natural usage-window reset timestamps and keeps them separate from subscription timing, banked-reset expiry, and purchased credits. The live path reads the signed-in account; the fixture path makes the report logic auditable without sharing credentials.
 
 ## What it shows
 
@@ -110,12 +144,15 @@ codex plugin add codexresets@personal
 Start a new Codex thread after installation so the skill is discovered. Then ask naturally or invoke it explicitly:
 
 ```text
+/codexresets When does my Codex weekly limit reset?
+/codexresets Compare my weekly reset with Codex Analytics.
+
 When does my Codex weekly limit reset?
 Use $check-codex-resets to show my weekly usage and reset date.
 Compare my weekly reset with Codex Analytics.
 ```
 
-The plugin runs the same checker and reports `weekly_usage.resets_at` first for weekly-reset questions. It does not substitute a subscription or banked-reset expiry date when weekly usage is unavailable. A `LOW`-confidence recommendation is a provisional forecast, not a reason by itself to schedule a banked reset; the plugin should identify the natural reset and advise checking again closer to the projected limit. When a recommendation becomes due, the skill must show the confirmation prompt to the user and must not submit `yes` until the user explicitly approves using one banked reset.
+The `/codexresets` command routes to the same checker through the plugin's `check-codex-resets` skill. It reports `weekly_usage.resets_at` first for weekly-reset questions and does not substitute a subscription or banked-reset expiry date when weekly usage is unavailable. A `LOW`-confidence recommendation is a provisional forecast, not a reason by itself to schedule a banked reset; the plugin should identify the natural reset and advise checking again closer to the projected limit. When a recommendation becomes due, the skill must show the confirmation prompt to the user and must not submit `yes` until the user explicitly approves using one banked reset.
 
 ## Use
 
@@ -268,6 +305,18 @@ The npm allowlist in `package.json` excludes tests, screenshots, local data, and
 configuration.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidance and [CHANGELOG.md](CHANGELOG.md) for release notes.
+
+## Maintainer launch checklist
+
+Treat the README, installer, and first-run demo as the product surface:
+
+- Test the copy-paste install on a clean macOS machine and a clean Linux machine. Watch a first-time user install it from scratch and fix every point where they get stuck.
+- Reproduce the fixture demo and run `npm test`, `npm run check`, and `npm run security:secrets` before sharing a release or launch post.
+- Share with one audience at a time: start with `r/LocalLLaMA`, then learn from the objections before moving to Show HN, Lobsters, `r/selfhosted`, or local-inference Discords. Tuesday–Thursday mornings ET are the intended launch window.
+- Seed participation ethically by asking people who have actually seen or used the project to try it and share honest feedback. Never buy stars or ask for stars in the README or launch post.
+- For the first two weeks after a launch, respond to every issue within a day and label concrete beginner-sized work `good first issue`.
+
+Stars are a credibility and contributor signal, not the product goal. Optimize for a reproducible report, a clean install, and useful contributions; let the launch spike follow from that.
 
 ## License
 
