@@ -28,6 +28,7 @@
     "install.sh",
     "codexresets.sh",
     "check-reset-credits.sh",
+    "plugins",
     "README.md",
     "LICENSE",
     "CHANGELOG.md",

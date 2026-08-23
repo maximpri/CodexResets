@@ -15,7 +15,7 @@
 - Legacy history is migrated to the CodexResets filename only after the same strict schema validation.
 - Credential and history paths cannot be the same file.
 - Terminal text, including explicitly requested ID suffixes, has control and direction-changing characters neutralized before rendering.
-- The quick installer fetches only the selected CodexResets tarball from GitHub over HTTPS, invokes npm with lifecycle scripts disabled, and never requests `sudo` or edits shell profiles.
+- The quick installer fetches only the selected CodexResets tarball from GitHub over HTTPS, invokes npm with lifecycle scripts disabled, and never requests `sudo` or edits shell profiles. When plugin setup is enabled, it copies the bundled plugin to the user's local plugin directory and updates the personal marketplace entry before invoking `codex plugin add`.
 - CI runs a dependency-free, high-confidence secret scan over tracked and unignored files and every reachable Git revision. Findings include only a filename, line number, secret type, and abbreviated Git object ID—not the matched value.
 - Repository fixtures and authentication tests use visibly synthetic identifiers and token values.
 

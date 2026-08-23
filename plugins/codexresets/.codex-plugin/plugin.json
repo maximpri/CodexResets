@@ -1,0 +1,37 @@
+{
+  "name": "codexresets",
+  "version": "1.0.0",
+  "description": "Codex usage, weekly reset, and confirmation-gated banked reset actions.",
+  "author": {
+    "name": "Codex Reset Credits Contributors",
+    "url": "https://github.com/maximpri/CodexResets"
+  },
+  "homepage": "https://github.com/maximpri/CodexResets#readme",
+  "repository": "https://github.com/maximpri/CodexResets",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "usage",
+    "weekly-reset",
+    "rate-limit"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "CodexResets",
+    "shortDescription": "Check usage and safely use due resets.",
+    "longDescription": "Read current Codex usage, identify the exact weekly reset date, and ask for explicit permission before consuming a due banked reset.",
+    "developerName": "Codex Reset Credits Contributors",
+    "category": "Productivity",
+    "capabilities": [
+      "Safe-by-default usage checks",
+      "Weekly reset timing",
+      "Confirmation-gated reset redemption"
+    ],
+    "websiteURL": "https://github.com/maximpri/CodexResets",
+    "defaultPrompt": [
+      "When does my Codex weekly usage limit reset?",
+      "Show my Codex usage and reset dates.",
+      "Watch my usage and ask before using a due banked reset."
+    ]
+  }
+}

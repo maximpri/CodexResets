@@ -13,6 +13,8 @@ bash codexresets-install.sh
 codexresets
 ```
 
+When `codex` is on `PATH`, the same installer also registers and enables the CodexResets plugin. Start a new Codex session after installation, then use `/codexresets`. Use `bash codexresets-install.sh --no-plugin` when you only want the standalone CLI.
+
 > [!IMPORTANT]
 > CodexResets is an independent community project, not an official OpenAI product. It uses undocumented ChatGPT endpoints that may change. Use `/usage` in the Codex TUI for the supported OpenAI experience.
 
@@ -116,7 +118,7 @@ bash codexresets-install.sh
 codexresets
 ```
 
-You can inspect `codexresets-install.sh` before running it and delete it afterward. The installer never uses `sudo` or edits your shell profile.
+You can inspect `codexresets-install.sh` before running it and delete it afterward. The installer never uses `sudo` or edits your shell profile. When plugin setup is enabled, it copies the bundled plugin to `~/plugins/codexresets`, updates the personal marketplace, and invokes `codex plugin add codexresets@personal`.
 
 If the default npm location is not writable, install to your home directory:
 
@@ -135,13 +137,13 @@ For a home-directory installation, add `--prefix "$HOME/.local"` to the uninstal
 
 ### Codex plugin
 
-The local plugin exposes the `check-codex-resets` skill. Install it from the personal marketplace entry created for the plugin:
+The quick installer installs the local plugin and exposes the `check-codex-resets` skill. If you skipped plugin setup or need to repair it, run:
 
 ```bash
 codex plugin add codexresets@personal
 ```
 
-Start a new Codex thread after installation so the skill is discovered. Then ask naturally or invoke it explicitly:
+Start a new Codex thread after installation so the skill and `/codexresets` command are discovered. Then ask naturally or invoke it explicitly:
 
 ```text
 /codexresets When does my Codex weekly limit reset?

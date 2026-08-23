@@ -37,13 +37,62 @@ chmod 755 "$CODEXRESETS_PREFIX/bin/codexresets"
     directory,
     log,
     prefix,
+    home: join(directory, 'home'),
     env: {
       ...process.env,
       PATH: `${mockBin}${delimiter}${process.env.PATH}`,
       CODEXRESETS_PREFIX: prefix,
       CODEXRESETS_TEST_LOG: log,
+      CODEXRESETS_SKIP_PLUGIN: '1',
     },
   };
+}
+
+function pluginInstallerEnvironment() {
+  const environment = installerEnvironment();
+  const { env, prefix, directory, home } = environment;
+  const mockBin = join(directory, 'bin');
+  const packageRoot = join(prefix, 'lib', 'node_modules', 'codexresets');
+  const codexLog = join(directory, 'codex.log');
+
+  delete env.CODEXRESETS_SKIP_PLUGIN;
+  env.CODEXRESETS_NPM_ROOT = join(prefix, 'lib', 'node_modules');
+  env.CODEXRESETS_CODEX_LOG = codexLog;
+  env.CODEXRESETS_TEST_PLUGIN_HELPER = new URL('../scripts/install-plugin.mjs', import.meta.url).pathname;
+  env.HOME = home;
+
+  const node = join(mockBin, 'node');
+  writeFileSync(node, `#!/bin/sh
+if [ "$1" = "-p" ]; then
+  printf '22\\n'
+else
+  exec ${JSON.stringify(process.execPath)} "$@"
+fi
+`);
+  chmodSync(node, 0o755);
+
+  const npm = join(mockBin, 'npm');
+  writeFileSync(npm, `#!/bin/sh
+if [ "$1" = "root" ]; then
+  printf '%s\\n' "$CODEXRESETS_NPM_ROOT"
+  exit 0
+fi
+printf '%s\\n' "$*" >> "$CODEXRESETS_TEST_LOG"
+mkdir -p "$CODEXRESETS_PREFIX/bin" "$CODEXRESETS_NPM_ROOT/codexresets/plugins/codexresets/.codex-plugin" "$CODEXRESETS_NPM_ROOT/codexresets/scripts"
+printf '#!/bin/sh\\nprintf "1.0.0\\n"\\n' > "$CODEXRESETS_PREFIX/bin/codexresets"
+chmod 755 "$CODEXRESETS_PREFIX/bin/codexresets"
+printf '%s\\n' '{"name":"codexresets","version":"1.0.0"}' > "$CODEXRESETS_NPM_ROOT/codexresets/plugins/codexresets/.codex-plugin/plugin.json"
+cp "$CODEXRESETS_TEST_PLUGIN_HELPER" "$CODEXRESETS_NPM_ROOT/codexresets/scripts/install-plugin.mjs"
+`);
+  chmodSync(npm, 0o755);
+
+  const codex = join(mockBin, 'codex');
+  writeFileSync(codex, `#!/bin/sh
+printf '%s\\n' "$*" >> "$CODEXRESETS_CODEX_LOG"
+`);
+  chmodSync(codex, 0o755);
+
+  return { ...environment, codexLog, packageRoot };
 }
 
 test('quick installer uses the fixed GitHub tarball endpoint with lifecycle scripts disabled', () => {
@@ -57,6 +106,28 @@ test('quick installer uses the fixed GitHub tarball endpoint with lifecycle scri
     `--prefix ${prefix}`,
     'https://api.github.com/repos/maximpri/CodexResets/tarball/main',
   ].join(' '));
+});
+
+test('quick installer registers and enables the bundled Codex plugin', () => {
+  const { env, codexLog, home, prefix } = pluginInstallerEnvironment();
+  const output = execFileSync('bash', [installer], { encoding: 'utf8', env });
+  const marketplace = JSON.parse(
+    readFileSync(join(home, '.agents', 'plugins', 'marketplace.json'), 'utf8'),
+  );
+  const pluginManifest = JSON.parse(
+    readFileSync(join(home, 'plugins', 'codexresets', '.codex-plugin', 'plugin.json'), 'utf8'),
+  );
+
+  assert.match(output, /Installed and enabled the CodexResets plugin/);
+  assert.equal(readFileSync(codexLog, 'utf8').trim(), 'plugin add codexresets@personal');
+  assert.equal(marketplace.name, 'personal');
+  assert.equal(marketplace.plugins[0].name, 'codexresets');
+  assert.equal(marketplace.plugins[0].source.path, './plugins/codexresets');
+  assert.match(pluginManifest.version, /^1\.0\.0\+codex\./);
+  assert.equal(
+    readFileSync(join(home, 'plugins', 'codexresets', '.codexresets-bin'), 'utf8'),
+    `${prefix}/bin/codexresets\n`,
+  );
 });
 
 test('quick installer rejects unsafe refs before invoking npm', () => {
