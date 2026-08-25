@@ -137,6 +137,13 @@ test('quick installer registers and enables the bundled Codex plugin', () => {
   );
 });
 
+test('quick installer resolves the package through npm global root', () => {
+  const output = readFileSync(installer, 'utf8');
+
+  assert.match(output, /npm root --global --prefix "\$install_prefix"/);
+  assert.doesNotMatch(output, /npm root --prefix "\$install_prefix"/);
+});
+
 test('quick installer rejects unsafe refs before invoking npm', () => {
   const { env } = installerEnvironment();
   const result = spawnSync('bash', [installer], {

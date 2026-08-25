@@ -93,7 +93,7 @@ elif ! command -v codex >/dev/null 2>&1; then
     'Codex CLI was not found on PATH; the standalone CLI is installed.' \
     'Install Codex or add it to PATH, then rerun this installer to enable the /codexresets command.'
 else
-  package_root="$(npm root --prefix "$install_prefix")/$PACKAGE"
+  package_root="$(npm root --global --prefix "$install_prefix")/$PACKAGE"
   plugin_source="$package_root/plugins/codexresets"
   plugin_installer="$package_root/scripts/install-plugin.mjs"
 
