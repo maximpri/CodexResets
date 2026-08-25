@@ -1,0 +1,4 @@
+interface:
+  display_name: "Check Codex Resets"
+  short_description: "Check usage and safely use due banked resets"
+  default_prompt: "Use $check-codex-resets to show my weekly reset and ask before using a due banked reset."

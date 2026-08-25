@@ -56,6 +56,14 @@ writeFileSync(
   `${JSON.stringify({ ...manifest, version: `${baseVersion}+codex.${cachebuster}` }, null, 2)}\n`,
   'utf8',
 );
+const launcherDirectory = join(
+  pluginDirectory,
+  'skills',
+  'check-codex-resets',
+  'scripts',
+);
+mkdirSync(launcherDirectory, { recursive: true });
+writeFileSync(join(launcherDirectory, 'codexresets-bin'), `${binary}\n`, { mode: 0o600 });
 writeFileSync(join(pluginDirectory, '.codexresets-bin'), `${binary}\n`, { mode: 0o600 });
 
 mkdirSync(dirname(marketplacePath), { recursive: true });

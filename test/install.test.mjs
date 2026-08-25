@@ -128,6 +128,13 @@ test('quick installer registers and enables the bundled Codex plugin', () => {
     readFileSync(join(home, 'plugins', 'codexresets', '.codexresets-bin'), 'utf8'),
     `${prefix}/bin/codexresets\n`,
   );
+  assert.equal(
+    readFileSync(
+      join(home, 'plugins', 'codexresets', 'skills/check-codex-resets/scripts/codexresets-bin'),
+      'utf8',
+    ),
+    `${prefix}/bin/codexresets\n`,
+  );
 });
 
 test('quick installer rejects unsafe refs before invoking npm', () => {
