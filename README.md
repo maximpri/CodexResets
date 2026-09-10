@@ -18,29 +18,6 @@ When `codex` is on `PATH`, the same installer also registers and enables the Cod
 > [!IMPORTANT]
 > CodexResets is an independent community project, not an official OpenAI product. Live checks use the local Codex app-server; the optional custom-auth path uses undocumented ChatGPT endpoints. These interfaces may change. Use `/usage` in the Codex TUI for the supported OpenAI experience.
 
-## Reproduce the demo
-
-The screenshot shows the report shape. The command below renders a current report from the checked-in fixture without credentials, network access, or account changes:
-
-```bash
-node src/cli.mjs \
-  --input test/fixtures/credits.json \
-  --now 2026-07-13T23:25:36Z \
-  --timezone America/Toronto \
-  --color never \
-  --width 80
-```
-
-The fixture, JSON output, and tests are the reproducibility harness for the project. Run the full verification suite with:
-
-```bash
-npm test
-npm run check
-npm run security:secrets
-```
-
-CodexResets makes no synthetic model-speed or cost claim. Its narrower, inspectable claim is that it reports the service's natural usage-window reset timestamps and keeps them separate from subscription timing, banked-reset expiry, and purchased credits. The live path reads the signed-in account; the fixture path makes the report logic auditable without sharing credentials.
-
 ## What it shows
 
 - The exact next five-hour and weekly limit reset dates in your selected time zone
