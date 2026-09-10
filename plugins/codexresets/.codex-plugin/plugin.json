@@ -1,6 +1,6 @@
 {
   "name": "codexresets",
-  "version": "1.0.0",
+  "version": "1.0.0+codex.20260825173802",
   "description": "Codex usage, weekly reset, and confirmation-gated banked reset actions.",
   "author": {
     "name": "Codex Reset Credits Contributors",

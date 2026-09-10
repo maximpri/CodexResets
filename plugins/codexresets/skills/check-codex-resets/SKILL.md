@@ -5,7 +5,11 @@ description: Check live Codex plan usage, exact five-hour or weekly limit reset 
 
 # Check Codex Resets
 
-Use the bundled CLI to read the authenticated Codex account. Keep reports observational unless a reset is due and the user explicitly approves the irreversible action at the live confirmation prompt.
+Use the bundled CLI to read the authenticated Codex account. Its default live path asks the
+authenticated Codex app-server for `account/rateLimits/read`; this keeps account selection and
+session refresh inside Codex instead of duplicating browser-facing ChatGPT requests. Keep reports
+observational unless a reset is due and the user explicitly approves the irreversible action at the
+live confirmation prompt.
 
 ## Check usage
 
@@ -50,7 +54,10 @@ Never call `account/rateLimitResetCredit/consume` directly from the agent. The b
 
 ## Handle failures
 
-If credentials are unavailable, tell the user to run `codex login`. If the local Codex app-server cannot start, confirm `codex --version` works and that the CLI is signed into the same ChatGPT account. If usage data is missing, state that directly instead of estimating from history or banked credits.
+If credentials are unavailable, tell the user to run `codex login`. If the local Codex app-server
+cannot start or its account-limits request fails, confirm `codex --version` works and that the CLI
+is signed into the same ChatGPT account. If usage data is missing, state that directly instead of
+estimating from history or banked credits.
 
 Do not use `--show-ids` unless the user explicitly requests diagnostic identifiers.
 

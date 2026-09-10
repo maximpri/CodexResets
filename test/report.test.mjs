@@ -420,12 +420,12 @@ test('table output leads with the decision and highlights chronological mileston
   const output = renderTable(report, { color: false, width: 96, details: true });
   assert.doesNotMatch(output, /example0000000/);
   assert.doesNotMatch(output, /total earned/i);
-  assert.doesNotMatch(output, /█|░/);
+  assert.match(output, /━/);
   assert.match(output, /20% used/);
   assert.match(output, /DECISION/);
-  assert.match(output, /USE A BANKED RESET IN 3d 17h 23m/);
+  assert.match(output, /PLAN TO RECHECK/);
   assert.match(output, /KEY MILESTONES/);
-  assert.match(output, /USE BANKED RESET/);
+  assert.match(output, /RECHECK RESET VALUE/);
   assert.match(output, /NEXT BANKED RESET EXPIRES/);
   assert.match(output, /WEEKLY CAPACITY RUNS OUT/);
   assert.doesNotMatch(output, /NOW \/ REPORT CHECKED/);
@@ -433,7 +433,7 @@ test('table output leads with the decision and highlights chronological mileston
   assert.match(output, /AT RISK/);
   assert.match(output, /points\/hour/);
   assert.match(output, /day\/night weighted/);
-  assert.match(output, /NEAR LIMIT/);
+  assert.match(output, /RECHECK NEAR/);
   assert.match(output, /EXPECTED RESET VALUE/);
   assert.match(output, /weekly 95 points/);
   assert.match(output, /BANKED RESETS/);
@@ -472,7 +472,7 @@ test('the full report keeps context while softening low-confidence advice', () =
   assert.match(output, /LOW CONFIDENCE/);
   assert.match(output, /NO ACTION NOW/);
   assert.match(output, /RECHECK NEAR/);
-  assert.match(output, /provisional forecast/);
+  assert.match(output, /forecast is low confidence/);
   assert.match(output, /EXPECTED RESET VALUE/);
   assert.match(output, /KEY MILESTONES/);
   assert.match(output, /LIMIT STATUS/);
@@ -520,4 +520,73 @@ test('JSON output is normalized and private by default', () => {
 test('rejects invalid time zones and timestamps', () => {
   assert.throws(() => normalizeReport(fixture, { now, timeZone: 'Not/A_Time_Zone' }), /Unknown time zone/);
   assert.throws(() => normalizeReport(fixture, { now: new Date('invalid'), timeZone: 'UTC' }), /Invalid value/);
+});
+
+for (const expiry of [1784246400, '1784246400', 1784246400000, '1784246400000', '2026-07-17T00:00:00Z']) {
+  test(`banked expiry accepts ISO dates and Unix seconds/milliseconds: ${expiry}`, () => {
+    const report = normalizeReport({ ...fixture, credits: [{ status: 'available', expiresAt: expiry }] }, { now, timeZone: 'UTC' });
+    assert.equal(report.nextSavedReset.expiresAt.toISOString(), '2026-07-17T00:00:00.000Z');
+    assert.notEqual(report.recommendation.action, 'NO_SAVED_RESET');
+    const json = JSON.parse(renderJson(report));
+    assert.equal(json.available_count, 1);
+    assert.equal(json.next_saved_full_reset.expires_at, '2026-07-17T00:00:00.000Z');
+    assert.doesNotMatch(renderTable(report), /1970|expires in expired/);
+  });
+}
+
+test('expired service entries are excluded consistently from availability and NEXT selection', () => {
+  const report = normalizeReport({ ...fixture, credits: [
+    { id: 'past', status: 'available', expires_at: '2026-07-01T00:00:00Z' },
+    { id: 'boundary', status: 'available', expires_at: now.toISOString() },
+    { id: 'future', status: 'available', expires_at: '2026-07-17T00:00:00Z' },
+  ] }, { now, timeZone: 'UTC' });
+  assert.equal(report.nextSavedReset.id, 'future');
+  assert.equal(JSON.parse(renderJson(report)).available_count, 1);
+  assert.equal(report.credits[0].urgency, 'EXPIRED');
+  const output = renderTable(report, { width: 80 });
+  assert.match(output, /1 AVAILABLE/);
+  assert.match(output, /2 expired entries excluded/);
+  assert.match(output, /Banked reset 01.*NEXT TO EXPIRE/);
+  assert.doesNotMatch(output, /expires in expired|EXPIRED.*NOW/);
+  assert.match(renderTable(report, { brief: true }), /1 available/);
+});
+
+test('an expired-only inventory offers no banked reset in any report mode', () => {
+  const report = normalizeReport({ ...fixture, credits: [
+    { status: 'available', expires_at: '2026-07-01T00:00:00Z' },
+  ] }, { now, timeZone: 'UTC' });
+  assert.equal(report.nextSavedReset, null);
+  assert.equal(report.recommendation.action, 'NO_SAVED_RESET');
+  assert.equal(JSON.parse(renderJson(report)).available_count, 0);
+  assert.match(renderTable(report), /0 AVAILABLE/);
+  assert.doesNotMatch(renderTable(report), /NEXT TO EXPIRE|expires in expired/);
+  const brief = renderTable(report, { brief: true });
+  assert.match(brief, /none available/);
+  assert.match(brief, /Slow your usage/);
+});
+
+for (const expiry of [null, undefined, '', 'invalid', false, [], {}]) {
+  test(`unknown banked expiry stays unknown: ${JSON.stringify(expiry)}`, () => {
+    const report = normalizeReport({ credits: [{ status: 'available', expires_at: expiry }] }, { now, timeZone: 'UTC' });
+    assert.equal(report.nextSavedReset.expiresAt, null);
+    assert.equal(report.nextSavedReset.urgency, 'UNKNOWN');
+    assert.match(renderTable(report), /Expiry unknown/);
+    assert.doesNotMatch(renderTable(report), /1970|EXPIRED|NEXT TO EXPIRE/);
+  });
+}
+
+test('detailed layout fits supported widths with color, ASCII, and long content', () => {
+  const data = structuredClone(fixture);
+  data.subscription = { plan_type: 'Synthetic '.repeat(16) };
+  const report = normalizeReport(data, { now, timeZone: 'America/Argentina/Buenos_Aires' });
+  for (const width of [68, 72, 80, 96, 120]) {
+    for (const color of [false, true]) {
+      for (const ascii of [false, true]) {
+        const output = renderTable(report, { width, color, ascii, showIds: true });
+        const plain = output.replace(/\u001b\[[0-9;]*m/g, '');
+        for (const line of plain.trimEnd().split('\n')) assert.equal([...line].length, width, line);
+        if (ascii) assert.doesNotMatch(plain, /[╭╮╰╯│─━•]/);
+      }
+    }
+  }
 });

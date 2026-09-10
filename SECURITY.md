@@ -2,14 +2,15 @@
 
 ## Security properties
 
-- Authentication requests are sent only to fixed HTTPS OpenAI and ChatGPT endpoints, with redirects rejected.
+- Default live reads use the local Codex app-server `account/rateLimits/read` method. Codex owns account selection, credential storage, and session refresh. CodexResets exchanges JSON-RPC over local process pipes and does not read tokens on this path.
+- With an explicit `--auth-file`, the legacy client sends authentication requests only to fixed HTTPS OpenAI and ChatGPT endpoints, with redirects rejected. This mode cannot consume resets.
 - Access and refresh tokens are used in memory and are never included in normal table output, JSON output, or sanitized service errors.
-- Usage responses are normalized to the five-hour and weekly rate-limit fields. Subscription data comes first from signed Codex ID-token claims, with an optional fixed-endpoint fallback, and is limited to plan type, renewal state, and billing-period dates. Account IDs, subscription IDs, tokens, and raw response bodies are not rendered.
+- Usage responses are normalized to the five-hour and weekly rate-limit fields. Default app-server data may contain only a plan name. In custom-auth mode, subscription dates come first from signed Codex ID-token claims, with an optional fixed-endpoint fallback. Output is limited to plan type, renewal state, and billing-period dates. Account IDs, subscription IDs, tokens, and raw response bodies are not rendered.
 - Credit identifiers are hidden by default. Full JSON IDs and shortened terminal IDs require the explicit `--show-ids` option.
 - Saved resets can be consumed only when a due recommendation is shown in an interactive table session and the user types the full word `yes`. JSON, redirected I/O, offline input, fixed-time reports, custom authentication files, and `--no-redeem-prompt` cannot trigger redemption.
 - Approved redemption uses the local Codex app-server's documented `account/rateLimitResetCredit/consume` method with a fresh UUID idempotency key. The selected opaque credit ID is never printed by the confirmation flow.
 - Successful and idempotently completed redemptions are followed by a fresh account report. `nothingToReset` and `noCredit` outcomes are explicitly reported as non-consumption.
-- Refreshed credentials are written to a uniquely named mode-`0600` temporary file in the credential file's directory and atomically renamed after a concurrent-update check. The destination is forced to mode `0600`.
+- In the legacy custom-auth client, refreshed credentials are written to a uniquely named mode-`0600` temporary file in the credential file's directory and atomically renamed after a concurrent-update check. The destination is forced to mode `0600`.
 - Opt-in history uses a strict schema containing only check times, usage percentages, and reset times. It never serializes authentication, account, credit, recommendation, or raw-response fields.
 - History writes are atomic and mode `0600`; retention and size caps limit the file to 90 days, 2,000 snapshots, and 2 MiB. Deletion validates the history schema before unlinking.
 - Legacy history is migrated to the CodexResets filename only after the same strict schema validation.
@@ -28,7 +29,7 @@ These controls reduce accidental disclosure but do not make saved credentials sa
 - Treat the optional history file as private usage-pattern metadata even though it has no account identifiers. Clear it with `--forget-history` before reusing the same credential-file path for another account.
 - Enable `--notify` only when an audible terminal signal revealing a recommendation change is suitable for the local environment.
 - Read the projected reset value before approving redemption. Consuming a banked reset is irreversible; type `yes` only when you intend to use the selected reset now. Use `--no-redeem-prompt` on shared terminals or whenever the tool must remain strictly observational.
-- Watch mode repeatedly contacts the fixed undocumented service endpoints. Do not leave its reports visible on a shared terminal.
+- Watch mode repeatedly reads account data through Codex app-server, or the fixed service endpoints in custom-auth mode. Do not leave its reports visible on a shared terminal.
 - Do not share output produced with `DEBUG=1`; the project and home paths are redacted, but diagnostic stacks may still reveal environment details.
 - Review saved API responses before using them as fixtures. Remove tokens, account data, emails, usernames, local paths, and real credit IDs.
 - Review the downloaded `codexresets-install.sh` before running it. Set `CODEXRESETS_REF` to a trusted tag or full commit when reproducible installation is more important than following `main`.

@@ -4,7 +4,8 @@ description: Check Codex usage, reset windows, and due banked resets through the
 
 # CodexResets
 
-Use the installed `$check-codex-resets` skill to handle this request. Pass through the
+Use the installed `$check-codex-resets` skill to handle this request. In Codex CLI, invoke the
+skill directly as `$codexresets:check-codex-resets` or select it through `/skills`. Pass through the
 user's text after the command:
 
 $ARGUMENTS

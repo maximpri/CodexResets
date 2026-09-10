@@ -457,7 +457,11 @@ async function buildReport(options) {
   const history = options.input
     ? emptyHistory()
     : await readUsageHistory(options.historyFile, { fallback: !options.record });
-  const data = options.input ? await readInput(options.input) : await fetchAccountData(options.authFile);
+  const data = options.input
+    ? await readInput(options.input)
+    : options.authFileExplicit
+      ? await fetchAccountData(options.authFile, globalThis.fetch)
+      : await fetchAccountData(options.authFile);
   if (!Array.isArray(data?.credits)) {
     throw new SafeError('The response does not contain a credits list. The service format may have changed.');
   }

@@ -30,7 +30,7 @@ test('renders an offline fixture without credentials', () => {
 
   assert.match(output, /CODEXRESETS/);
   assert.match(output, /DECISION/);
-  assert.match(output, /USE A BANKED RESET IN/);
+  assert.match(output, /PLAN TO RECHECK/);
   assert.match(output, /KEY MILESTONES/);
   assert.match(output, /LIMIT STATUS/);
   assert.match(output, /BANKED RESETS/);

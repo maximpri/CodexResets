@@ -91,7 +91,7 @@ if [[ "$skip_plugin" == '1' ]]; then
 elif ! command -v codex >/dev/null 2>&1; then
   printf '%s\n' \
     'Codex CLI was not found on PATH; the standalone CLI is installed.' \
-    'Install Codex or add it to PATH, then rerun this installer to enable the /codexresets command.'
+    'Install Codex or add it to PATH, then rerun this installer to enable the CodexResets skill.'
 else
   package_root="$(npm root --global --prefix "$install_prefix")/$PACKAGE"
   plugin_source="$package_root/plugins/codexresets"
@@ -108,7 +108,7 @@ else
   elif codex plugin add codexresets@personal; then
     printf '%s\n' \
       'Installed and enabled the CodexResets plugin.' \
-      'Start a new Codex session, then use /codexresets.'
+      "Start a new Codex session, then use \$codexresets:check-codex-resets or /skills."
   else
     printf '%s\n' \
       'Warning: the standalone CLI is installed, but Codex could not enable the plugin.' \

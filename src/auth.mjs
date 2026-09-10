@@ -1,19 +1,15 @@
 import { chmod, readFile, realpath, rename, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { callCodexAppServer } from './app-server.mjs';
+import { SafeError } from './errors.mjs';
+
+export { SafeError } from './errors.mjs';
 
 export const CREDITS_URL = 'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits';
 export const USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 export const SUBSCRIPTIONS_URL = 'https://chatgpt.com/backend-api/subscriptions';
 const TOKEN_URL = 'https://auth.openai.com/api/accounts/oauth/token';
-
-export class SafeError extends Error {
-  constructor(message, { cause, retryable = false } = {}) {
-    super(message, { cause });
-    this.name = 'SafeError';
-    this.retryable = Boolean(retryable);
-  }
-}
 
 function decodeJwtPayload(token) {
   const segment = String(token || '').split('.')[1];
@@ -267,7 +263,61 @@ export function fetchUsage(authFile, fetchImpl = globalThis.fetch) {
   return fetchWithSession(authFile, fetchImpl, requestUsage);
 }
 
-export async function fetchAccountData(authFile, fetchImpl = globalThis.fetch) {
+function appServerWindow(window) {
+  if (!window || typeof window !== 'object') return null;
+  return {
+    used_percent: window.usedPercent,
+    window_minutes: window.windowDurationMins,
+    reset_at: window.resetsAt,
+  };
+}
+
+export function normalizeAppServerAccountData(result) {
+  const rateLimits = result?.rateLimitsByLimitId?.codex ?? result?.rateLimits;
+  if (!rateLimits || typeof rateLimits !== 'object') {
+    throw new SafeError('Codex app-server did not return account rate limits.');
+  }
+
+  const creditSummary = result?.rateLimitResetCredits;
+  const creditRows = Array.isArray(creditSummary?.credits) ? creditSummary.credits : [];
+  const credits = creditRows.map((credit) => ({
+    id: credit?.id,
+    status: credit?.status,
+    title: credit?.title,
+    description: credit?.description,
+    reset_type: credit?.resetType,
+    granted_at: credit?.grantedAt,
+    expires_at: credit?.expiresAt,
+  }));
+
+  return {
+    credits,
+    available_count: Number.isFinite(creditSummary?.availableCount)
+      ? creditSummary.availableCount
+      : credits.length,
+    ...(typeof rateLimits.planType === 'string' && rateLimits.planType
+      ? { subscription: { plan_type: rateLimits.planType } }
+      : {}),
+    usage: {
+      plan_type: rateLimits.planType,
+      rate_limit: {
+        limit_reached: Boolean(rateLimits.rateLimitReachedType)
+          || [rateLimits.primary, rateLimits.secondary]
+            .some((window) => Number(window?.usedPercent) >= 100),
+        primary_window: appServerWindow(rateLimits.primary),
+        secondary_window: appServerWindow(rateLimits.secondary),
+      },
+    },
+  };
+}
+
+export async function fetchAccountDataViaAppServer(rpcCall = callCodexAppServer) {
+  const result = await rpcCall('account/rateLimits/read', {});
+  return normalizeAppServerAccountData(result);
+}
+
+export async function fetchAccountData(authFile, fetchImpl) {
+  if (fetchImpl === undefined) return fetchAccountDataViaAppServer();
   if (typeof fetchImpl !== 'function') {
     throw new SafeError('This Node.js version does not provide fetch. Install Node.js 18 or newer.');
   }

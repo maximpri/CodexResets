@@ -32,6 +32,8 @@ function finiteNumber(value) {
 
 function timestampDate(value) {
   if (value instanceof Date) return Number.isFinite(value.getTime()) ? new Date(value) : null;
+  if ((typeof value !== 'number' && typeof value !== 'string')
+    || (typeof value === 'string' && !value.trim())) return null;
   const numeric = finiteNumber(value);
   const date = numeric === null
     ? new Date(value ?? '')
@@ -140,6 +142,7 @@ export function formatDuration(milliseconds) {
 
 export function urgencyFor(milliseconds) {
   if (!Number.isFinite(milliseconds)) return 'UNKNOWN';
+  if (milliseconds <= 0) return 'EXPIRED';
   if (milliseconds <= HOUR) return 'NOW';
   if (milliseconds <= 6 * HOUR) return 'SOON';
   if (milliseconds <= 24 * HOUR) return 'TODAY';
@@ -653,21 +656,18 @@ export function normalizeReport(data, { now = new Date(), timeZone, history = []
   const credits = (Array.isArray(data?.credits) ? data.credits : [])
     .filter((credit) => String(credit?.status || '').toLowerCase() === 'available')
     .map((credit) => {
-      const expiresAt = new Date(credit?.expires_at ?? credit?.expiresAt ?? '');
-      const validExpiry = Number.isFinite(expiresAt.getTime());
-      const remainingMs = validExpiry ? expiresAt.getTime() - checkedAt.getTime() : Number.NaN;
+      const expiresAt = timestampDate(credit?.expires_at ?? credit?.expiresAt);
+      const remainingMs = expiresAt ? expiresAt.getTime() - checkedAt.getTime() : Number.NaN;
       return {
         id: creditId(credit),
         title: String(credit?.title || credit?.name || 'Reset credit'),
-        expiresAt: validExpiry ? expiresAt : null,
+        expiresAt,
         remainingMs,
         urgency: urgencyFor(remainingMs),
       };
     })
     .sort((a, b) => {
-      if (!a.expiresAt) return 1;
-      if (!b.expiresAt) return -1;
-      return a.expiresAt - b.expiresAt;
+      return (a.expiresAt?.getTime() ?? Infinity) - (b.expiresAt?.getTime() ?? Infinity) || 0;
     });
 
   const { fiveHourUsage, weeklyUsage } = normalizeUsageWindows(
@@ -701,6 +701,10 @@ function truncate(value, maximum) {
   const text = String(value);
   if ([...text].length <= maximum) return text;
   return `${[...text].slice(0, Math.max(0, maximum - 1)).join('')}…`;
+}
+
+function availableCredits(report) {
+  return report.credits.filter((credit) => !credit.expiresAt || credit.remainingMs > 0);
 }
 
 function terminalSafe(value) {
@@ -803,7 +807,7 @@ export function renderJson(report, { showIds = false } = {}) {
       expires_in: formatDuration(report.nextSavedReset.remainingMs),
       ...(showIds ? { id: report.nextSavedReset.id || null } : {}),
     } : null,
-    available_count: report.credits.length,
+    available_count: availableCredits(report).length,
     credits: report.credits.map((credit) => ({
       title: credit.title,
       expires_at: credit.expiresAt?.toISOString() ?? null,
@@ -929,8 +933,10 @@ function compactDecision(report) {
   if (recommendation.action === 'NO_SAVED_RESET') {
     return {
       title: 'NO BANKED RESET AVAILABLE',
-      style: 'dim',
-      next: report.subscription?.expiresAt
+      style: exhaustsBeforePlanningBoundary(usage, report.subscription) ? 'yellow' : 'cyan',
+      next: exhaustsBeforePlanningBoundary(usage, report.subscription)
+        ? `${usage.label} capacity may run out before its reset. Slow your usage to make the remaining capacity last.`
+        : report.subscription?.expiresAt
         ? `Subscription access ends ${formatFriendlyDate(report.subscription.expiresAt, report.timeZone)}; no banked reset is available.`
         : 'Continue using Codex; there is no banked reset to manage.',
     };
@@ -1016,7 +1022,7 @@ function renderCompactTable(report, options = {}) {
     if (!usage) return;
     const state = compactUsageState(usage, report.subscription);
     pushWrapped(
-      `${numberLabel(usage.usedPercent)}% used ${glyph.bullet} ${numberLabel(usage.remainingPercent)}% left`,
+      `${numberLabel(usage.remainingPercent)}% left ${glyph.bullet} ${numberLabel(usage.usedPercent)}% used`,
       labelPrefix(usage.label),
       continuationPrefix,
       'bold',
@@ -1064,7 +1070,7 @@ function renderCompactTable(report, options = {}) {
   }
 
   if (report.nextSavedReset) {
-    const available = `${report.credits.length} available`;
+    const available = `${availableCredits(report).length} available`;
     const expiry = report.nextSavedReset.expiresAt
       ? `expires ${formatFriendlyDate(report.nextSavedReset.expiresAt, report.timeZone)}`
       : 'expiry unknown';
@@ -1103,385 +1109,206 @@ function renderCompactTable(report, options = {}) {
 function renderDetailedTable(report, options = {}) {
   const color = Boolean(options.color);
   const ascii = Boolean(options.ascii);
-  const showIds = Boolean(options.showIds);
   const requestedWidth = Number(options.width);
   const width = Math.min(120, Math.max(68, Number.isFinite(requestedWidth) ? requestedWidth : 96));
   const inner = width - 4;
   const glyph = ascii
-    ? {
-      tl: '+', tr: '+', bl: '+', br: '+', h: '-', v: '|', ml: '+', mr: '+',
-      dot: 'o', focus: '>', risk: '!', bullet: '*',
-    }
-    : {
-      tl: '╭', tr: '╮', bl: '╰', br: '╯', h: '─', v: '│', ml: '├', mr: '┤',
-      dot: '●', focus: '◆', risk: '!', bullet: '•',
-    };
-
+    ? { tl: '+', tr: '+', bl: '+', br: '+', h: '-', v: '|', bullet: '*', fill: '#', empty: '-' }
+    : { tl: '╭', tr: '╮', bl: '╰', br: '╯', h: '─', v: '│', bullet: '•', fill: '━', empty: '─' };
   const paint = (value, ...styles) => color
     ? `${styles.map((style) => ANSI[style]).join('')}${value}${ANSI.reset}`
     : String(value);
-  const urgencyStyle = { NOW: 'red', SOON: 'yellow', TODAY: 'cyan', LATER: 'green', UNKNOWN: 'dim' };
-  const actionStyle = {
-    USE_NOW: 'red',
-    USE_NEAR_LIMIT: 'yellow',
-    USE_BEFORE_EXPIRY: 'yellow',
-    WAIT_FOR_WEEKLY_RESET: 'green',
-    WAIT_FOR_FIVE_HOUR_RESET: 'green',
-    SKIP_EXPIRING_RESET: 'green',
-    NO_SAVED_RESET: 'dim',
-    CHECK_USAGE: 'cyan',
-    SUBSCRIPTION_EXPIRED: 'red',
-  };
-  const actionLabel = {
-    USE_NOW: 'USE NOW',
-    USE_NEAR_LIMIT: 'NEAR LIMIT',
-    USE_BEFORE_EXPIRY: 'BEFORE EXPIRY',
-    WAIT_FOR_WEEKLY_RESET: 'WAIT',
-    WAIT_FOR_FIVE_HOUR_RESET: 'WAIT',
-    SKIP_EXPIRING_RESET: 'SKIP / WAIT',
-    NO_SAVED_RESET: 'NO BANKED',
-    CHECK_USAGE: 'CHECK USAGE',
-    SUBSCRIPTION_EXPIRED: 'EXPIRED',
-  };
-  const actionHeadline = {
-    USE_NOW: 'USE A BANKED RESET NOW',
-    WAIT_FOR_WEEKLY_RESET: 'KEEP YOUR BANKED RESET',
-    WAIT_FOR_FIVE_HOUR_RESET: 'KEEP YOUR BANKED RESET',
-    SKIP_EXPIRING_RESET: 'LET THIS BANKED RESET EXPIRE',
-    NO_SAVED_RESET: 'NO BANKED RESET TO USE',
-    CHECK_USAGE: 'CHECK USAGE BEFORE DECIDING',
-    SUBSCRIPTION_EXPIRED: 'RENEW YOUR SUBSCRIPTION',
-  };
   const numberLabel = (value, decimals = 1) => Number.isInteger(value)
     ? String(value)
     : value.toFixed(decimals).replace(/\.0$/, '');
-  const fit = (value, maximum) => truncate(value, maximum).padEnd(maximum);
-  const line = (content = '') => {
-    const padding = Math.max(0, inner - visibleLength(content));
-    return `${glyph.v} ${content}${' '.repeat(padding)} ${glyph.v}`;
+  const output = [];
+  let secondary = false;
+  const line = (value = '') => output.push(
+    `${paint(glyph.v, 'dim')} ${secondary ? paint(stripAnsi(value), 'dim') : value}${' '.repeat(Math.max(0, inner - visibleLength(value)))} ${paint(glyph.v, 'dim')}`,
+  );
+  const wrap = (value, prefix = '', ...styles) => {
+    const maximum = inner - visibleLength(prefix);
+    let row = '';
+    let first = true;
+    for (const word of terminalSafe(value).split(' ')) {
+      if (row && visibleLength(`${row} ${word}`) > maximum) {
+        line(`${first ? prefix : ' '.repeat(visibleLength(prefix))}${paint(row, ...styles)}`);
+        first = false;
+        row = '';
+      }
+      row = row ? `${row} ${word}` : truncate(word, maximum);
+    }
+    line(`${first ? prefix : ' '.repeat(visibleLength(prefix))}${paint(row, ...styles)}`);
   };
   const sides = (left, right) => {
-    const gap = Math.max(1, inner - visibleLength(left) - visibleLength(right));
-    return line(`${left}${' '.repeat(gap)}${right}`);
-  };
-  const wrappedLines = (value, prefix = '', ...styles) => {
-    const words = terminalSafe(value).split(' ').filter(Boolean);
-    const maximum = Math.max(1, inner - visibleLength(prefix));
-    const rows = [];
-    let current = '';
-    for (const word of words) {
-      if (!current) {
-        current = truncate(word, maximum);
-      } else if (visibleLength(`${current} ${word}`) <= maximum) {
-        current = `${current} ${word}`;
-      } else {
-        rows.push(current);
-        current = truncate(word, maximum);
-      }
+    if (visibleLength(left) + visibleLength(right) + 2 > inner) {
+      wrap(stripAnsi(left));
+      wrap(stripAnsi(right), '  ');
+    } else {
+      line(`${left}${' '.repeat(inner - visibleLength(left) - visibleLength(right))}${right}`);
     }
-    if (current || !rows.length) rows.push(current);
-    return rows.map((row, index) => line(paint(
-      `${index === 0 ? prefix : ' '.repeat(visibleLength(prefix))}${row}`,
-      ...styles,
-    )));
   };
-  const border = (left, right) => `${left}${glyph.h.repeat(width - 2)}${right}`;
-  const separator = () => border(glyph.ml, glyph.mr);
+  const section = (title, detail = '') => {
+    line();
+    sides(paint(title, 'bold'), detail);
+  };
+  const date = (at) => formatDate(at, report.timeZone, { seconds: false });
+  const usable = availableCredits(report);
+  const expired = report.credits.length - usable.length;
+  const urgencyStyle = { NOW: 'red', SOON: 'yellow', TODAY: 'cyan', LATER: 'green', UNKNOWN: 'yellow', EXPIRED: 'dim' };
 
-  const output = [border(glyph.tl, glyph.tr)];
-  const count = report.credits.length;
-  output.push(sides(
-    `${paint('CODEXRESETS', 'bold')} ${paint('/ RESET CONTROL', 'dim')}`,
-    paint(`checked ${formatDate(report.checkedAt, report.timeZone, { seconds: false, weekday: false })}`, 'dim'),
-  ));
-  output.push(separator());
-  const recommendation = report.recommendation;
-  const recommendationRemaining = recommendation.recommendedAt
-    ? recommendation.recommendedAt - report.checkedAt
+  output.push(paint(`${glyph.tl}${glyph.h.repeat(width - 2)}${glyph.tr}`, 'dim'));
+  sides(paint('CODEXRESETS', 'bold'), paint(`Checked ${formatDate(report.checkedAt, report.timeZone, { seconds: false, weekday: false })}`, 'dim'));
+  line();
+
+  const overview = report.weeklyUsage ?? report.fiveHourUsage;
+  const columnWidth = Math.floor((inner - 6) / 3);
+  const columns = (cells) => line(cells.map((cell, index) => (
+    index === cells.length - 1 ? cell : `${cell}${' '.repeat(Math.max(0, columnWidth - visibleLength(cell)))}`
+  )).join('   '));
+  columns([
+    paint(overview ? `${overview.label.toUpperCase()} LEFT` : 'USAGE LEFT', 'dim'),
+    paint('RESETS IN', 'dim'),
+    paint('BANKED RESETS', 'dim'),
+  ]);
+  columns([
+    paint(overview ? `${numberLabel(overview.remainingPercent)}%` : 'Unavailable', 'bold', 'cyan'),
+    paint(overview ? formatDuration(overview.remainingMs) : 'Unknown', 'bold'),
+    paint(`${usable.length} AVAILABLE`, 'bold', usable.length ? 'green' : 'yellow'),
+  ]);
+  const nextExpiry = report.nextSavedReset?.expiresAt
+    ? formatDuration(report.nextSavedReset.remainingMs)
     : null;
-  const lowConfidenceFuture = ['USE_NEAR_LIMIT', 'USE_BEFORE_EXPIRY']
-    .includes(recommendation.action)
-    && recommendationRemaining > 0
-    && recommendationUsage(report)?.confidence === 'LOW';
-  const recommendationBadge = paint(
-    lowConfidenceFuture
-      ? 'LOW CONFIDENCE'
-      : actionLabel[recommendation.action] ?? recommendation.action,
-    'bold',
-    lowConfidenceFuture ? 'cyan' : actionStyle[recommendation.action] ?? 'dim',
-  );
-  const dynamicHeadline = lowConfidenceFuture
-    ? 'NO ACTION NOW — RECHECK CLOSER TO THIS DATE'
-    : ['USE_NEAR_LIMIT', 'USE_BEFORE_EXPIRY'].includes(recommendation.action)
-      ? recommendationRemaining <= 0
-        ? 'USE A BANKED RESET NOW'
-        : `USE A BANKED RESET IN ${formatDuration(recommendationRemaining)}`
-      : actionHeadline[recommendation.action] ?? recommendation.action;
-  output.push(sides(paint('DECISION', 'bold'), recommendationBadge));
-  output.push(line(paint(
-    dynamicHeadline,
-    'bold',
-    lowConfidenceFuture ? 'cyan' : actionStyle[recommendation.action] ?? 'dim',
-  )));
-  output.push(...wrappedLines(
-    lowConfidenceFuture
-      ? 'Current usage suggests a banked reset may become useful near the forecast date.'
-      : recommendation.reason,
-    `${glyph.bullet} `,
-  ));
-  if (lowConfidenceFuture) {
-    output.push(...wrappedLines(
-      'Treat this as a provisional forecast, not a scheduled redemption.',
-      `${glyph.bullet} `,
-      'dim',
-    ));
-  }
-  if (recommendation.recommendedAt) {
-    output.push(sides(
-      paint(lowConfidenceFuture ? 'RECHECK NEAR' : 'DO THIS', 'dim'),
-      paint(formatDate(recommendation.recommendedAt, report.timeZone, { seconds: false }), 'bold'),
-    ));
-  }
-  const resetValues = recommendation.estimatedResetValues;
-  const valueParts = [
-    resetValues.fiveHourPercent === null
-      ? null
-      : `5-hour ${numberLabel(resetValues.fiveHourPercent)} points`,
-    resetValues.weeklyPercent === null
-      ? null
-      : `weekly ${numberLabel(resetValues.weeklyPercent)} points`,
-  ].filter(Boolean);
-  if (valueParts.length) {
-    output.push(sides(
-      paint('EXPECTED RESET VALUE', 'dim'),
-      paint(valueParts.join(` ${glyph.bullet} `), 'bold'),
-    ));
-  } else if (recommendation.estimatedResetValuePercent !== null) {
-    output.push(sides(
-      paint('EXPECTED RESET VALUE', 'dim'),
-      paint(`${numberLabel(recommendation.estimatedResetValuePercent)} points`, 'bold'),
-    ));
-  } else if (recommendation.projectedUsagePercent !== null) {
-    const projectionLabel = recommendation.action === 'WAIT_FOR_WEEKLY_RESET'
-      ? 'AT WEEKLY RESET'
-      : recommendation.action === 'WAIT_FOR_FIVE_HOUR_RESET'
-        ? 'AT 5-HOUR RESET'
-      : recommendation.action === 'SKIP_EXPIRING_RESET'
-        ? recommendation.deadlineType === 'subscription_expiry'
-          ? 'AT SUBSCRIPTION EXPIRY'
-          : 'AT BANKED RESET EXPIRY'
-        : 'PROJECTED USAGE';
-    output.push(sides(
-      paint(projectionLabel, 'dim'),
-      paint(`${numberLabel(recommendation.projectedUsagePercent)}% used`, 'bold'),
-    ));
-  }
-  if (report.nextSavedReset) {
-    const expiry = recommendation.deadlineAt;
-    const deadlineLabel = recommendation.deadlineType === 'subscription_expiry'
-      ? 'subscription expires in'
-      : 'banked reset expires in';
-    output.push(sides(
-      paint('DECISION DEADLINE', 'dim'),
-      expiry
-        ? expiry <= report.checkedAt
-          ? paint(recommendation.deadlineType === 'subscription_expiry'
-            ? 'subscription expired'
-            : 'banked reset expired', 'red')
-          : `${deadlineLabel} ${paint(formatDuration(expiry - report.checkedAt), 'bold')}`
-        : paint('banked reset expiry unknown', 'dim'),
-    ));
-  } else {
-    output.push(line(paint('No unexpired banked reset is available.', 'dim')));
-  }
-
-  const milestones = [];
-  const addMilestone = (at, label, tone = 'dim', kind = 'standard') => {
-    if (!at || !Number.isFinite(at.getTime()) || at < report.checkedAt) return;
-    milestones.push({ at, label, tone, kind });
+  columns([
+    paint(overview ? `${numberLabel(overview.usedPercent)}% used` : 'Check again later', 'dim'),
+    paint(overview ? 'Natural limit reset' : 'No usage data', 'dim'),
+    paint(nextExpiry ? `Expiry: ${nextExpiry}` : usable.length ? 'Expiry unknown' : 'None to redeem', 'dim'),
+  ]);
+  line();
+  const usageSummary = (usage) => {
+    if (!usage) return;
+    const state = compactUsageState(usage, report.subscription);
+    const size = width < 80 ? 12 : 20;
+    const remaining = Math.round(usage.remainingPercent / 100 * size);
+    const bar = `${paint(glyph.fill.repeat(remaining), 'cyan')}${paint(glyph.empty.repeat(size - remaining), 'dim')}`;
+    sides(`${paint(usage.label.padEnd(7), 'bold')} ${bar}  ${paint(`${numberLabel(usage.remainingPercent)}% left`, 'bold')}`, paint(state.label, 'bold', state.style));
+    if (exhaustsBeforePlanningBoundary(usage, report.subscription)) {
+      const until = usage.estimatedExhaustionAt <= report.checkedAt ? '0m' : formatDuration(usage.estimatedExhaustionAt - report.checkedAt);
+      wrap(`! May run out in ${until}, before reset (estimate).`, '  ', 'yellow');
+    }
   };
+  usageSummary(report.weeklyUsage);
+  usageSummary(report.fiveHourUsage);
+
+  const recommendation = report.recommendation;
+  const decision = compactDecision(report);
+  const future = recommendation.recommendedAt > report.checkedAt;
+  const lowConfidence = future && recommendationUsage(report)?.confidence === 'LOW';
+  line();
+  line(paint(glyph.h.repeat(inner), 'dim'));
+  sides(paint(`> ${decision.title}`, 'bold', decision.style), paint(lowConfidence ? 'LOW CONFIDENCE' : 'NEXT ACTION', 'dim'));
+  wrap(future && ['USE_NEAR_LIMIT', 'USE_BEFORE_EXPIRY'].includes(recommendation.action)
+    ? lowConfidence
+      ? 'This forecast is low confidence. Recheck usage before deciding.'
+      : recommendation.action === 'USE_NEAR_LIMIT'
+        ? 'Keep the reset for now. Redeem only if usage is still near its limit when you recheck.'
+        : 'Keep the reset for now. Recheck its value before the deadline.'
+    : decision.next);
   if (recommendation.recommendedAt) {
-    addMilestone(
-      recommendation.recommendedAt,
-      lowConfidenceFuture
-        ? 'RECHECK PROVISIONAL FORECAST'
-        : recommendation.action === 'USE_NOW'
-          ? 'USE BANKED RESET NOW'
-          : 'USE BANKED RESET',
-      lowConfidenceFuture ? 'cyan' : actionStyle[recommendation.action] ?? 'yellow',
-      'focus',
-    );
+    sides(paint(future ? 'RECHECK NEAR' : 'READY NOW', 'bold'), paint(date(recommendation.recommendedAt), 'bold', decision.style));
   }
-  if (exhaustsBeforePlanningBoundary(report.fiveHourUsage, report.subscription)) {
-    addMilestone(report.fiveHourUsage.estimatedExhaustionAt, '5-HOUR CAPACITY RUNS OUT', 'red', 'risk');
+  if (report.nextSavedReset && (!nextExpiry || report.nextSavedReset.remainingMs <= DAY)) {
+    wrap(nextExpiry ? `Banked reset expires in ${nextExpiry}.` : 'Banked reset expiry is unknown; check it in Codex.', '', 'yellow');
   }
-  if (exhaustsBeforePlanningBoundary(report.weeklyUsage, report.subscription)) {
-    addMilestone(report.weeklyUsage.estimatedExhaustionAt, 'WEEKLY CAPACITY RUNS OUT', 'red', 'risk');
+  if (report.subscription?.expiresAt && report.subscription.remainingMs > 0 && report.subscription.remainingMs <= DAY) {
+    wrap(`Subscription expires in ${formatDuration(report.subscription.remainingMs)}.`, '', 'yellow');
   }
-  if (report.nextSavedReset?.expiresAt) {
-    addMilestone(
-      report.nextSavedReset.expiresAt,
-      'NEXT BANKED RESET EXPIRES',
-      urgencyStyle[report.nextSavedReset.urgency] ?? 'dim',
-      'risk',
-    );
-  }
-  if (report.subscription?.expiresAt) {
-    addMilestone(
-      report.subscription.expiresAt,
-      'SUBSCRIPTION EXPIRES',
-      'red',
-      'risk',
-    );
-  } else if (report.subscription?.renewsAt) {
-    addMilestone(report.subscription.renewsAt, 'SUBSCRIPTION RENEWS', 'dim');
-  }
-  addMilestone(report.fiveHourUsage?.resetsAt, '5-HOUR LIMIT RESETS', 'green');
-  addMilestone(report.weeklyUsage?.resetsAt, 'WEEKLY LIMIT RESETS', 'green');
-  milestones.sort((a, b) => a.at - b.at || (a.kind === 'focus' ? -1 : 1));
-  const visibleMilestones = milestones;
-
-  output.push(separator());
-  const milestoneContext = `${report.timeZone} ${glyph.bullet} chronological`;
-  const milestoneContextWidth = Math.max(8, inner - visibleLength('KEY MILESTONES') - 1);
-  output.push(sides(
-    paint('KEY MILESTONES', 'bold'),
-    paint(truncate(milestoneContext, milestoneContextWidth), 'dim'),
-  ));
-  const milestoneRelativeWidth = Math.min(18, Math.max(
-    13,
-    ...visibleMilestones.map((milestone) => visibleLength(
-      milestone.at <= report.checkedAt
-        ? 'NOW'
-        : `IN ${formatDuration(milestone.at - report.checkedAt)}`,
-    )),
-  ));
-  for (const milestone of visibleMilestones) {
-    const relative = milestone.at <= report.checkedAt
-      ? 'NOW'
-      : `IN ${formatDuration(milestone.at - report.checkedAt)}`;
-    const marker = milestone.kind === 'focus'
-      ? glyph.focus
-      : milestone.kind === 'risk'
-        ? glyph.risk
-        : glyph.dot;
-    const leftPrefix = `${paint(marker, 'bold', milestone.tone)} ${fit(relative, milestoneRelativeWidth)} `;
-    const absolute = paint(
-      formatDate(milestone.at, report.timeZone, { seconds: false }),
-      'dim',
-    );
-    const maximumLabel = Math.max(8, inner - visibleLength(leftPrefix) - visibleLength(absolute) - 1);
-    output.push(sides(
-      `${leftPrefix}${paint(truncate(milestone.label, maximumLabel), 'bold', milestone.tone)}`,
-      absolute,
-    ));
+  line();
+  line(paint(`DETAILS ${glyph.h.repeat(inner - 8)}`, 'dim'));
+  secondary = true;
+  section('DECISION', 'Forecast context');
+  const values = recommendation.estimatedResetValues;
+  const valueParts = [
+    values.fiveHourPercent === null ? null : `5-hour ${numberLabel(values.fiveHourPercent)} points`,
+    values.weeklyPercent === null ? null : `weekly ${numberLabel(values.weeklyPercent)} points`,
+  ].filter(Boolean);
+  if (valueParts.length) sides('EXPECTED RESET VALUE', valueParts.join(` ${glyph.bullet} `));
+  if (recommendation.deadlineAt && report.nextSavedReset) {
+    const subject = recommendation.deadlineType === 'subscription_expiry' ? 'subscription' : 'banked reset';
+    wrap(recommendation.deadlineAt <= report.checkedAt
+      ? `${subject} expired`
+      : `${subject} expires in ${formatDuration(recommendation.deadlineAt - report.checkedAt)}`,
+    '', 'yellow');
   }
 
-  output.push(separator());
-  output.push(line(paint('LIMIT STATUS', 'bold')));
-  if (report.subscription) {
-    const plan = terminalSafe(report.subscription.planType || 'Subscription');
-    const status = report.subscription.expiresAt
-      ? `${report.subscription.remainingMs <= 0 ? 'expired' : `expires in ${formatDuration(report.subscription.remainingMs)}`}`
-      : report.subscription.renewsAt
-        ? `renews in ${formatDuration(report.subscription.renewsAt - report.checkedAt)}`
-        : 'expiry unavailable';
-    output.push(sides(
-      paint(truncate(`PLAN      ${plan}`, Math.max(12, inner - visibleLength(status) - 1)), 'bold'),
-      paint(status, report.subscription.remainingMs <= 0 ? 'red' : 'dim'),
-    ));
-  }
+  section('LIMIT STATUS', 'Exact reset dates / pace');
   const appendUsage = (usage, paceUnit) => {
     if (!usage) return;
-    const exhaustsBeforeBoundary = exhaustsBeforePlanningBoundary(usage, report.subscription);
-    const planningBoundary = planningBoundaryFor(usage, report.subscription);
-    const state = exhaustsBeforeBoundary
-      ? paint('AT RISK', 'bold', 'red')
-      : usage.averagePercentPerDay === null
-        ? paint('LEARNING', 'bold', 'dim')
-        : paint('ON TRACK', 'bold', 'green');
-    output.push(sides(
-      `${paint(usage.label.toUpperCase().padEnd(8), 'bold')} ${paint(`${numberLabel(usage.usedPercent)}% used`, 'bold')} ${glyph.bullet} ${numberLabel(usage.remainingPercent)}% left`,
-      `reset in ${paint(formatDuration(usage.remainingMs), 'bold')}  ${state}`,
-    ));
-    if (usage.averagePercentPerDay === null) {
-      output.push(line(paint('          Pace collecting early-window data · LOW confidence', 'dim')));
-      return;
+    sides(`${usage.label} resets in ${formatDuration(usage.remainingMs)}`, date(usage.resetsAt));
+    if (usage.averagePercentPerDay !== null) {
+      const pace = paceUnit === 'hour' ? usage.averagePercentPerHour : usage.averagePercentPerDay;
+      const basis = usage.paceSource === 'recorded_history' ? 'recorded delta' : 'day/night weighted';
+      wrap(`${numberLabel(pace, 2)} points/${paceUnit} ${glyph.bullet} ${basis} ${glyph.bullet} ${usage.confidence} confidence`, '  ');
+    } else {
+      wrap('Collecting early-window data; forecast not yet available.', '  ');
     }
-    const pace = paceUnit === 'hour' ? usage.averagePercentPerHour : usage.averagePercentPerDay;
-    const paceBasis = usage.paceSource === 'recorded_history'
-      ? 'recorded delta'
-      : 'day/night weighted';
-    const outcome = exhaustsBeforeBoundary
-      ? `empty in ${formatDuration(usage.estimatedExhaustionAt - report.checkedAt)}`
-      : planningBoundary.type === 'subscription_expiry'
-        ? 'subscription ends first'
-      : 'lasts through reset';
-    output.push(...wrappedLines(
-      `Pace ${numberLabel(pace, 2)} points/${paceUnit} ${glyph.bullet} ${paceBasis} ${glyph.bullet} ${usage.confidence} confidence ${glyph.bullet} ${outcome}`,
-      '  ',
-      'dim',
-    ));
   };
-  if (!report.fiveHourUsage && !report.weeklyUsage) {
-    output.push(line(paint('Usage data is unavailable in this response.', 'dim')));
-  } else {
-    appendUsage(report.fiveHourUsage, 'hour');
-    appendUsage(report.weeklyUsage, 'day');
+  appendUsage(report.weeklyUsage, 'day');
+  appendUsage(report.fiveHourUsage, 'hour');
+  if (!report.weeklyUsage && !report.fiveHourUsage) wrap('Usage data is unavailable in this response.');
+  if (report.subscription) {
+    line();
+    const subscription = report.subscription;
+    const plan = terminalSafe(subscription.planType || 'Subscription');
+    const status = subscription.expiresAt
+      ? `${subscription.remainingMs <= 0 ? 'Expired' : 'Expires'} ${date(subscription.expiresAt)}`
+      : subscription.renewsAt ? `Renews ${date(subscription.renewsAt)}` : '';
+    sides(paint(`PLAN      ${plan}`, 'bold'), status);
   }
 
-  if (count === 0) {
-    output.push(separator());
-    output.push(sides(paint('BANKED RESETS', 'bold'), paint('NONE AVAILABLE', 'dim')));
-    output.push(line('No banked resets are currently available.'));
-  } else {
-    output.push(separator());
-    output.push(sides(
-      paint('BANKED RESETS', 'bold'),
-      paint(`${count} AVAILABLE`, 'bold', 'green'),
-    ));
-    for (const [index, credit] of report.credits.entries()) {
-      const number = String(index + 1).padStart(2, '0');
-      const badge = paint(credit.urgency, 'bold', urgencyStyle[credit.urgency]);
-      const creditRight = credit.expiresAt
-        ? `expires in ${paint(formatDuration(credit.remainingMs), 'bold')}  ${badge}`
-        : `${paint('expiry unknown', 'dim')}  ${badge}`;
-      const creditPrefix = `${paint(number, 'dim')}  `;
-      const nextLabel = index === 0 ? `  ${paint('NEXT', 'yellow')}` : '';
-      const titleWidth = Math.max(
-        4,
-        inner
-          - visibleLength(creditPrefix)
-          - visibleLength(nextLabel)
-          - visibleLength(creditRight)
-          - 1,
-      );
-      output.push(sides(
-        `${creditPrefix}${paint(truncate('Banked reset', titleWidth), 'bold')}${nextLabel}`,
-        creditRight,
-      ));
+  section('BANKED RESETS', paint(`${usable.length} AVAILABLE`, 'bold', usable.length ? 'green' : 'cyan'));
+  if (!usable.length) wrap('No banked resets are currently available.');
+  // Available entries first; expired service rows remain visible but cannot be NEXT.
+  const inventory = [...usable, ...report.credits.filter((credit) => credit.expiresAt && credit.remainingMs <= 0)];
+  for (const [index, credit] of inventory.entries()) {
+    const isExpired = credit.expiresAt && credit.remainingMs <= 0;
+    const next = credit === report.nextSavedReset ? ` ${glyph.bullet} NEXT TO EXPIRE` : '';
+    const title = `Banked reset ${String(index + 1).padStart(2, '0')}${credit.expiresAt ? next : ''}`;
+    const status = isExpired ? 'EXPIRED'
+      : credit.expiresAt ? `Expires in ${formatDuration(credit.remainingMs)}` : 'Expiry unknown';
+    sides(paint(title, 'bold'), paint(status, isExpired ? 'dim' : 'bold', urgencyStyle[credit.urgency]));
+    if (credit.expiresAt) wrap(date(credit.expiresAt), '  ', isExpired ? 'dim' : 'reset');
+    else wrap('Check the expiry in Codex before planning a reset.', '  ', 'yellow');
+    if (options.showIds) wrap(idLabel(credit.id), '  ', 'dim');
+  }
+  if (expired) wrap(`${expired} expired ${expired === 1 ? 'entry' : 'entries'} excluded from availability.`, '', 'dim');
 
-      if (credit.expiresAt) {
-        const local = formatDate(credit.expiresAt, report.timeZone, { seconds: false });
-        const utc = formatDate(credit.expiresAt, 'UTC', { seconds: false, weekday: false });
-        const utcDetail = report.timeZone === 'UTC' ? '' : ` ${glyph.bullet} UTC ${utc.replace(/ UTC$/, '')}`;
-        const idDetail = showIds ? ` ${glyph.bullet} ${idLabel(credit.id)}` : '';
-        output.push(line(paint(truncate(`    ${local}${utcDetail}${idDetail}`, inner), 'dim')));
-      } else {
-        if (showIds) output.push(line(paint(`    ${idLabel(credit.id)}`, 'dim')));
-      }
+  const milestones = [];
+  const add = (at, label, style = 'cyan', estimate = false) => {
+    if (at && at >= report.checkedAt) milestones.push({ at, label, style, estimate });
+  };
+  add(recommendation.recommendedAt, future ? 'RECHECK RESET VALUE' : 'USE BANKED RESET NOW', 'yellow', future);
+  for (const usage of [report.fiveHourUsage, report.weeklyUsage].filter(Boolean)) {
+    if (exhaustsBeforePlanningBoundary(usage, report.subscription)) {
+      add(usage.estimatedExhaustionAt, `${usage.label.toUpperCase()} CAPACITY RUNS OUT`, 'yellow', true);
+    }
+    add(usage.resetsAt, `${usage.label.toUpperCase()} LIMIT RESETS`, 'green');
+  }
+  add(report.nextSavedReset?.expiresAt, 'NEXT BANKED RESET EXPIRES', 'yellow');
+  add(report.subscription?.expiresAt, 'SUBSCRIPTION EXPIRES', 'yellow');
+  add(report.subscription?.renewsAt, 'SUBSCRIPTION RENEWS');
+  milestones.sort((a, b) => a.at - b.at);
+  if (milestones.length) {
+    section('KEY MILESTONES', paint('Chronological', 'cyan'));
+    for (const milestone of milestones) {
+      const relative = milestone.at <= report.checkedAt ? 'NOW' : `IN ${formatDuration(milestone.at - report.checkedAt)}`;
+      sides(milestone.label, relative);
+      wrap(`${date(milestone.at)}${milestone.estimate ? ' (estimate)' : ''}`, '  ');
     }
   }
-
-  output.push(separator());
-  output.push(line([
-    paint('EXPIRY', 'dim'), '  ',
-    paint('NOW', 'bold', 'red'), ' <=1h  ',
-    paint('SOON', 'bold', 'yellow'), ' <=6h  ',
-    paint('TODAY', 'bold', 'cyan'), ' <=24h  ',
-    paint('LATER', 'bold', 'green'), ' >24h',
-  ].join('')));
-  output.push(border(glyph.bl, glyph.br));
+  line();
+  wrap(`${report.timeZone} ${glyph.bullet} Forecasts depend on your usage pace.`, '', 'dim');
+  output.push(paint(`${glyph.bl}${glyph.h.repeat(width - 2)}${glyph.br}`, 'dim'));
   return `${output.join('\n')}\n`;
 }
 

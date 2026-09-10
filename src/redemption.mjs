@@ -1,8 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { spawn } from 'node:child_process';
-import { createInterface as createLineReader } from 'node:readline';
 import { createInterface as createPrompt } from 'node:readline/promises';
-import { SafeError } from './auth.mjs';
+import { SafeError } from './errors.mjs';
+import { callCodexAppServer } from './app-server.mjs';
 
 const DUE_ACTIONS = new Set(['USE_NOW', 'USE_NEAR_LIMIT', 'USE_BEFORE_EXPIRY']);
 const REDEMPTION_OUTCOMES = new Set([
@@ -42,115 +41,6 @@ function resetValueSummary(report) {
       : `weekly ${label(values.weeklyPercent)} points`,
   ].filter(Boolean);
   return parts.length ? parts.join(', ') : 'the eligible Codex rate-limit window';
-}
-
-export async function callCodexAppServer(method, params = {}, dependencies = {}) {
-  const spawnImpl = dependencies.spawnImpl ?? spawn;
-  const timeoutMs = dependencies.timeoutMs ?? 15_000;
-
-  return new Promise((resolve, reject) => {
-    let child;
-    let settled = false;
-    let requestSent = false;
-    let timer;
-    let reader;
-
-    const finish = (error, result) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      reader?.close();
-      child?.stdin?.end();
-      if (child && !child.killed) child.kill();
-      if (error) reject(error);
-      else resolve(result);
-    };
-
-    const write = (message) => {
-      try {
-        child.stdin.write(`${JSON.stringify(message)}\n`);
-      } catch {
-        finish(new SafeError('Could not communicate with the Codex app server.', {
-          retryable: true,
-        }));
-      }
-    };
-
-    try {
-      child = spawnImpl('codex', ['app-server'], {
-        stdio: ['pipe', 'pipe', 'ignore'],
-      });
-    } catch {
-      finish(new SafeError('Could not start the Codex app server. Confirm the Codex CLI is installed.'));
-      return;
-    }
-
-    child.once('error', () => {
-      finish(new SafeError('Could not start the Codex app server. Confirm the Codex CLI is installed.'));
-    });
-    child.once('exit', () => {
-      if (!settled) {
-        finish(new SafeError('The Codex app server stopped before completing the reset request.', {
-          retryable: true,
-        }));
-      }
-    });
-    child.stdin.on('error', () => {
-      if (!settled) {
-        finish(new SafeError('Could not communicate with the Codex app server.', {
-          retryable: true,
-        }));
-      }
-    });
-
-    reader = createLineReader({ input: child.stdout });
-    reader.on('line', (line) => {
-      let message;
-      try {
-        message = JSON.parse(line);
-      } catch {
-        finish(new SafeError('The Codex app server returned an invalid response.', {
-          retryable: true,
-        }));
-        return;
-      }
-
-      if (message.id === 1) {
-        if (message.error) {
-          finish(new SafeError('The Codex app server rejected initialization.'));
-          return;
-        }
-        write({ method: 'initialized', params: {} });
-        write({ method, id: 2, params });
-        requestSent = true;
-        return;
-      }
-
-      if (message.id === 2 && requestSent) {
-        if (message.error) {
-          finish(new SafeError('Codex could not consume the banked reset.'));
-          return;
-        }
-        finish(null, message.result);
-      }
-    });
-
-    timer = setTimeout(() => {
-      finish(new SafeError('The Codex reset request timed out.', { retryable: true }));
-    }, timeoutMs);
-
-    write({
-      method: 'initialize',
-      id: 1,
-      params: {
-        clientInfo: {
-          name: 'codexresets',
-          title: 'CodexResets',
-          version: '1.0.0',
-        },
-      },
-    });
-  });
 }
 
 export async function consumeRateLimitReset(options = {}) {

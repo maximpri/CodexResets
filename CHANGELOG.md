@@ -4,6 +4,11 @@ All notable changes to this project will be documented here. The format follows 
 
 ## [Unreleased]
 
+### Fixed
+
+- Parse banked-reset expiries consistently as ISO dates or Unix seconds/milliseconds, correcting app-server dates that previously appeared in January 1970.
+- Exclude expired service entries from available counts in JSON and both terminal views; label them `EXPIRED` and never mark them as the next reset.
+
 ### Security
 
 - Credential refreshes now replace permissive file modes with `0600` while retaining atomic writes and concurrent-update protection.
@@ -31,6 +36,9 @@ All notable changes to this project will be documented here. The format follows 
 
 ### Changed
 
+- Default live account reads now use Codex app-server with shared transport for approved redemption. Explicit custom-auth files retain the legacy direct-HTTPS path.
+- Added an at-a-glance stats row for capacity left, natural reset countdown, and available banked resets. Remaining-capacity bars and the next action take visual priority; exact dates, calculations, and inventory details use a muted secondary style.
+- Future actions now say `PLAN TO RECHECK`; forecast milestones are labeled as estimates. Removed the expiry legend and duplicate UTC dates.
 - Advanced the forecast methodology to version 3 for the new subscription-expiry constraint.
 - Kept the information-rich decision, milestone, pace, confidence, limit-status, and banked-reset report as the default, with a concise `--brief` mode for quick checks.
 - Added a borderless layout for 40–67-column terminals, grouped help with examples, typo suggestions for long options, and a visible watch-mode status line.
